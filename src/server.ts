@@ -1,0 +1,230 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { logger } from "./logger.js";
+import { closeDatabase } from "./database.js";
+import {
+  createNote,
+  searchNotes,
+  getNoteContent,
+  appendToNote,
+  replaceNoteContent,
+  listNotesByTag,
+  getAllTags,
+  trashNote,
+  BearError
+} from "./bear.js";
+import { DatabaseError } from "./database.js";
+
+const server = new McpServer({
+  name: "bear",
+  version: "1.0.0"
+});
+
+type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: true };
+
+const handleError = (error: unknown): ToolResult => {
+  const message = error instanceof BearError || error instanceof DatabaseError
+    ? error.message
+    : error instanceof Error
+      ? error.message
+      : "An unknown error occurred";
+
+  logger.error("Tool execution failed", { error });
+
+  return {
+    content: [{ type: "text", text: `Error: ${message}` }],
+    isError: true
+  };
+};
+
+// Tool: Create note
+server.tool(
+  "bear_create_note",
+  "Create a new note in Bear",
+  {
+    title: z.string().describe("Note title"),
+    text: z.string().describe("Note content (Markdown)"),
+    tags: z.array(z.string()).optional().describe("Tags to add to the note")
+  },
+  async ({ title, text, tags }): Promise<ToolResult> => {
+    try {
+      await createNote(title, text, tags);
+      return {
+        content: [{ type: "text", text: `Created note: ${title}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Search notes
+server.tool(
+  "bear_search",
+  "Search for notes in Bear by text or tag",
+  {
+    term: z.string().optional().describe("Search term (free text)"),
+    tag: z.string().optional().describe("Filter by tag (without #)")
+  },
+  async ({ term, tag }): Promise<ToolResult> => {
+    try {
+      const notes = searchNotes(term, tag);
+      return {
+        content: [{ type: "text", text: JSON.stringify(notes, null, 2) }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Get note content
+server.tool(
+  "bear_get_note",
+  "Get the full content of a specific note",
+  {
+    noteId: z.string().describe("Note ID (from search results)")
+  },
+  async ({ noteId }): Promise<ToolResult> => {
+    try {
+      const note = getNoteContent(noteId);
+      if (!note) {
+        return {
+          content: [{ type: "text", text: `Note not found: ${noteId}` }],
+          isError: true
+        };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(note, null, 2) }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Append to note
+server.tool(
+  "bear_append",
+  "Append text to an existing note",
+  {
+    title: z.string().describe("Note title"),
+    text: z.string().describe("Text to append")
+  },
+  async ({ title, text }): Promise<ToolResult> => {
+    try {
+      await appendToNote(title, text);
+      return {
+        content: [{ type: "text", text: `Appended text to: ${title}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Replace note content
+server.tool(
+  "bear_replace_content",
+  "Replace the entire content of an existing note",
+  {
+    title: z.string().describe("Note title"),
+    text: z.string().describe("New content (Markdown)"),
+    tags: z.array(z.string()).optional().describe("Tags to set on the note")
+  },
+  async ({ title, text, tags }): Promise<ToolResult> => {
+    try {
+      await replaceNoteContent(title, text, tags);
+      return {
+        content: [{ type: "text", text: `Replaced content of: ${title}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: List all tags
+server.tool(
+  "bear_list_tags",
+  "List all tags in Bear with note counts",
+  {},
+  async (): Promise<ToolResult> => {
+    try {
+      const tags = getAllTags();
+      return {
+        content: [{ type: "text", text: JSON.stringify(tags, null, 2) }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: List notes by tag
+server.tool(
+  "bear_list_by_tag",
+  "List all notes with a specific tag",
+  {
+    tag: z.string().describe("Tag to filter by (without #)")
+  },
+  async ({ tag }): Promise<ToolResult> => {
+    try {
+      const notes = listNotesByTag(tag);
+      const result = { tag, count: notes.length, notes };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Trash note
+server.tool(
+  "bear_trash_note",
+  "Move a note to trash",
+  {
+    noteId: z.string().describe("Note ID")
+  },
+  async ({ noteId }): Promise<ToolResult> => {
+    try {
+      await trashNote(noteId);
+      return {
+        content: [{ type: "text", text: `Moved note to trash: ${noteId}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Cleanup on exit
+process.on("SIGINT", () => {
+  closeDatabase();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  closeDatabase();
+  process.exit(0);
+});
+
+// Start server
+const main = async () => {
+  logger.info("Starting Bear MCP server");
+
+  const transport = new StdioServerTransport();
+
+  try {
+    await server.connect(transport);
+    logger.info("Bear MCP server connected");
+  } catch (error) {
+    logger.error("Failed to start server", { error });
+    process.exit(1);
+  }
+};
+
+main();
