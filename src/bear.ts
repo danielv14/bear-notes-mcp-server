@@ -219,7 +219,7 @@ export const listNotesByTag = (tag: string): Note[] => {
       FROM ZSFNOTE n
       JOIN Z_5TAGS nt ON n.Z_PK = nt.Z_5NOTES
       JOIN ZSFNOTETAG t ON nt.Z_13TAGS = t.Z_PK
-      WHERE t.ZTITLE = ?
+      WHERE LOWER(t.ZTITLE) = LOWER(?)
         AND n.ZTRASHED = 0
         AND n.ZARCHIVED = 0
       ORDER BY n.ZMODIFICATIONDATE DESC
