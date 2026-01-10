@@ -77,6 +77,16 @@ export const trashNote = async (noteId: string): Promise<void> => {
   logger.info("Trashed note", { noteId });
 };
 
+export const archiveNote = async (noteId: string): Promise<void> => {
+  await callBearUrl("archive", { id: noteId });
+  logger.info("Archived note", { noteId });
+};
+
+export const unarchiveNote = async (noteId: string): Promise<void> => {
+  await callBearUrl("unarchive", { id: noteId });
+  logger.info("Unarchived note", { noteId });
+};
+
 // ============================================================================
 // READ OPERATIONS (via SQLite - fast)
 // ============================================================================
@@ -253,5 +263,34 @@ export const getAllTags = (): Tag[] => {
   } catch (error) {
     logger.error("Failed to get tags", { error });
     throw new DatabaseError("Failed to get tags", error);
+  }
+};
+
+export const listArchivedNotes = (): Note[] => {
+  const db = getDatabase();
+
+  try {
+    const query = `
+      SELECT
+        ZUNIQUEIDENTIFIER as id,
+        ZTITLE as title,
+        datetime(ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
+        datetime(ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt
+      FROM ZSFNOTE
+      WHERE ZARCHIVED = 1
+        AND ZTRASHED = 0
+      ORDER BY ZMODIFICATIONDATE DESC
+      LIMIT 100
+    `;
+
+    const rows = db.prepare(query).all() as Note[];
+
+    return rows.map(note => ({
+      ...note,
+      tags: getNoteTags(note.id)
+    }));
+  } catch (error) {
+    logger.error("Failed to list archived notes", { error });
+    throw new DatabaseError("Failed to list archived notes", error);
   }
 };

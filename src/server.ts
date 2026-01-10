@@ -12,6 +12,9 @@ import {
   listNotesByTag,
   getAllTags,
   trashNote,
+  archiveNote,
+  unarchiveNote,
+  listArchivedNotes,
   BearError
 } from "./bear.js";
 import { DatabaseError } from "./database.js";
@@ -194,6 +197,62 @@ server.tool(
       await trashNote(noteId);
       return {
         content: [{ type: "text", text: `Moved note to trash: ${noteId}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Archive note
+server.tool(
+  "bear_archive_note",
+  "Archive a note (moves it out of main view but keeps it accessible)",
+  {
+    noteId: z.string().describe("Note ID")
+  },
+  async ({ noteId }): Promise<ToolResult> => {
+    try {
+      await archiveNote(noteId);
+      return {
+        content: [{ type: "text", text: `Archived note: ${noteId}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Unarchive note
+server.tool(
+  "bear_unarchive_note",
+  "Restore an archived note back to the main view",
+  {
+    noteId: z.string().describe("Note ID")
+  },
+  async ({ noteId }): Promise<ToolResult> => {
+    try {
+      await unarchiveNote(noteId);
+      return {
+        content: [{ type: "text", text: `Unarchived note: ${noteId}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: List archived notes
+server.tool(
+  "bear_list_archived",
+  "List all archived notes",
+  {},
+  async (): Promise<ToolResult> => {
+    try {
+      const notes = listArchivedNotes();
+      const result = { count: notes.length, notes };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
       };
     } catch (error) {
       return handleError(error);
