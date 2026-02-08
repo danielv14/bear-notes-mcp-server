@@ -15,9 +15,7 @@ import {
   archiveNote,
   unarchiveNote,
   listArchivedNotes,
-  BearError
 } from "./bear.js";
-import { DatabaseError } from "./database.js";
 
 const server = new McpServer({
   name: "bear",
@@ -27,12 +25,7 @@ const server = new McpServer({
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: true };
 
 const handleError = (error: unknown): ToolResult => {
-  const message = error instanceof BearError || error instanceof DatabaseError
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : "An unknown error occurred";
-
+  const message = error instanceof Error ? error.message : "An unknown error occurred";
   logger.error("Tool execution failed", { error });
 
   return {
@@ -112,14 +105,14 @@ server.tool(
   "bear_append",
   "Append text to an existing note",
   {
-    title: z.string().describe("Note title"),
+    noteId: z.string().describe("Note ID (from search results)"),
     text: z.string().describe("Text to append")
   },
-  async ({ title, text }): Promise<ToolResult> => {
+  async ({ noteId, text }): Promise<ToolResult> => {
     try {
-      await appendToNote(title, text);
+      await appendToNote(noteId, text);
       return {
-        content: [{ type: "text", text: `Appended text to: ${title}` }]
+        content: [{ type: "text", text: `Appended text to note: ${noteId}` }]
       };
     } catch (error) {
       return handleError(error);
@@ -132,15 +125,15 @@ server.tool(
   "bear_replace_content",
   "Replace the entire content of an existing note",
   {
-    title: z.string().describe("Note title"),
+    noteId: z.string().describe("Note ID (from search results)"),
     text: z.string().describe("New content (Markdown)"),
     tags: z.array(z.string()).optional().describe("Tags to set on the note")
   },
-  async ({ title, text, tags }): Promise<ToolResult> => {
+  async ({ noteId, text, tags }): Promise<ToolResult> => {
     try {
-      await replaceNoteContent(title, text, tags);
+      await replaceNoteContent(noteId, text, tags);
       return {
-        content: [{ type: "text", text: `Replaced content of: ${title}` }]
+        content: [{ type: "text", text: `Replaced content of note: ${noteId}` }]
       };
     } catch (error) {
       return handleError(error);

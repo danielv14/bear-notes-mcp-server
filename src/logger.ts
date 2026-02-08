@@ -7,8 +7,15 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3
 };
 
-// Set minimum log level via environment variable, default to "info"
-const MIN_LEVEL = (process.env.BEAR_MCP_LOG_LEVEL as LogLevel) || "info";
+const VALID_LOG_LEVELS: readonly string[] = ["debug", "info", "warn", "error"];
+
+const getLogLevel = (): LogLevel => {
+  const env = process.env.BEAR_MCP_LOG_LEVEL;
+  if (env && VALID_LOG_LEVELS.includes(env)) return env as LogLevel;
+  return "info";
+};
+
+const MIN_LEVEL = getLogLevel();
 
 const shouldLog = (level: LogLevel): boolean => {
   return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[MIN_LEVEL];
