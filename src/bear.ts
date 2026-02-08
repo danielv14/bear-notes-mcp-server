@@ -1,9 +1,9 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
 import { logger } from "./logger.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface Note {
   id: string;
@@ -39,7 +39,7 @@ const callBearUrl = async (action: string, params: Record<string, string>): Prom
   const url = `bear://x-callback-url/${action}?${encodedParams}`;
 
   try {
-    await execAsync(`open "${url}"`);
+    await execFileAsync("open", [url]);
     logger.debug("Called Bear URL", { action, params });
   } catch (error) {
     logger.error("Bear URL call failed", { action, params, error });
@@ -57,19 +57,19 @@ export const createNote = async (title: string, text: string, tags?: string[]): 
   logger.info("Created note", { title, tags });
 };
 
-export const appendToNote = async (title: string, text: string): Promise<void> => {
-  await callBearUrl("add-text", { title, text, mode: "append" });
-  logger.info("Appended to note", { title });
+export const appendToNote = async (noteId: string, text: string): Promise<void> => {
+  await callBearUrl("add-text", { id: noteId, text, mode: "append" });
+  logger.info("Appended to note", { noteId });
 };
 
-export const replaceNoteContent = async (title: string, text: string, tags?: string[]): Promise<void> => {
+export const replaceNoteContent = async (noteId: string, text: string, tags?: string[]): Promise<void> => {
   let fullText = "";
   if (tags?.length) {
     fullText = tags.map(t => `#${t}`).join(" ") + "\n\n";
   }
   fullText += text;
-  await callBearUrl("add-text", { title, text: fullText, mode: "replace_all" });
-  logger.info("Replaced note content", { title, tags });
+  await callBearUrl("add-text", { id: noteId, text: fullText, mode: "replace_all" });
+  logger.info("Replaced note content", { noteId, tags });
 };
 
 export const trashNote = async (noteId: string): Promise<void> => {
@@ -92,19 +92,32 @@ export const unarchiveNote = async (noteId: string): Promise<void> => {
 // ============================================================================
 
 const getNoteTags = (noteId: string): string[] => {
+  return getNoteTagsBatch([noteId])[noteId] ?? [];
+};
+
+const getNoteTagsBatch = (noteIds: string[]): Record<string, string[]> => {
+  if (noteIds.length === 0) return {};
+
   const db = getDatabase();
+  const placeholders = noteIds.map(() => "?").join(", ");
 
   const query = `
-    SELECT t.ZTITLE as name
+    SELECT n.ZUNIQUEIDENTIFIER as noteId, t.ZTITLE as name
     FROM ZSFNOTETAG t
     JOIN Z_5TAGS nt ON t.Z_PK = nt.Z_13TAGS
     JOIN ZSFNOTE n ON nt.Z_5NOTES = n.Z_PK
-    WHERE n.ZUNIQUEIDENTIFIER = ?
+    WHERE n.ZUNIQUEIDENTIFIER IN (${placeholders})
     ORDER BY t.ZTITLE
   `;
 
-  const rows = db.prepare(query).all(noteId) as { name: string }[];
-  return rows.map(r => r.name);
+  const rows = db.prepare(query).all(...noteIds) as { noteId: string; name: string }[];
+
+  const result: Record<string, string[]> = {};
+  for (const row of rows) {
+    if (!result[row.noteId]) result[row.noteId] = [];
+    result[row.noteId].push(row.name);
+  }
+  return result;
 };
 
 export const searchNotes = (term?: string, tag?: string): Note[] => {
@@ -171,12 +184,12 @@ export const searchNotes = (term?: string, tag?: string): Note[] => {
     }
 
     const rows = db.prepare(query).all(...params) as Note[];
+    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
 
-    // Get tags for each note
     return rows.map(note => ({
       ...note,
       isTrashed: Boolean(note.isTrashed),
-      tags: getNoteTags(note.id),
+      tags: tagsByNote[note.id] ?? [],
       content: undefined // Don't include full content in search results
     }));
   } catch (error) {
@@ -233,10 +246,16 @@ export const listNotesByTag = (tag: string): Note[] => {
         AND n.ZTRASHED = 0
         AND n.ZARCHIVED = 0
       ORDER BY n.ZMODIFICATIONDATE DESC
+      LIMIT 100
     `;
 
     const rows = db.prepare(query).all(tag) as Note[];
-    return rows;
+    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
+
+    return rows.map(note => ({
+      ...note,
+      tags: tagsByNote[note.id] ?? []
+    }));
   } catch (error) {
     logger.error("Failed to list notes by tag", { tag, error });
     throw new DatabaseError("Failed to list notes by tag", error);
@@ -284,10 +303,11 @@ export const listArchivedNotes = (): Note[] => {
     `;
 
     const rows = db.prepare(query).all() as Note[];
+    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
 
     return rows.map(note => ({
       ...note,
-      tags: getNoteTags(note.id)
+      tags: tagsByNote[note.id] ?? []
     }));
   } catch (error) {
     logger.error("Failed to list archived notes", { error });
