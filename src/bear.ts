@@ -63,6 +63,11 @@ export const appendToNote = async (noteId: string, text: string): Promise<void> 
   logger.info("Appended to note", { noteId });
 };
 
+export const prependToNote = async (noteId: string, text: string): Promise<void> => {
+  await callBearUrl("add-text", { id: noteId, text, mode: "prepend" });
+  logger.info("Prepended to note", { noteId });
+};
+
 export const replaceNoteContent = async (noteId: string, text: string, tags?: string[]): Promise<void> => {
   let fullText = "";
   if (tags?.length) {
@@ -86,6 +91,16 @@ export const archiveNote = async (noteId: string): Promise<void> => {
 export const unarchiveNote = async (noteId: string): Promise<void> => {
   await callBearUrl("unarchive", { id: noteId });
   logger.info("Unarchived note", { noteId });
+};
+
+export const renameTag = async (name: string, newName: string): Promise<void> => {
+  await callBearUrl("rename-tag", { name, new_name: newName });
+  logger.info("Renamed tag", { name, newName });
+};
+
+export const deleteTag = async (name: string): Promise<void> => {
+  await callBearUrl("delete-tag", { name });
+  logger.info("Deleted tag", { name });
 };
 
 // ============================================================================

@@ -22,7 +22,7 @@ This is an MCP (Model Context Protocol) server that provides Claude Code access 
 ### Hybrid Read/Write Strategy
 
 - **Read operations** (search, get, list): Direct SQLite queries against Bear's database (read-only mode)
-- **Write operations** (create, append, replace, trash): Bear's `bear://x-callback-url` scheme via `open` command
+- **Write operations** (create, append, prepend, replace, trash, archive, rename-tag, delete-tag): Bear's `bear://x-callback-url` scheme via `open` command
 
 This separation ensures fast reads while using Bear's official API for safe writes.
 
