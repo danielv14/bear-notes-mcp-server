@@ -32,7 +32,8 @@ export class BearError extends Error {
 // ============================================================================
 
 const callBearUrl = async (action: string, params: Record<string, string>): Promise<void> => {
-  const encodedParams = Object.entries(params)
+  const allParams = { ...params, show_window: "no" };
+  const encodedParams = Object.entries(allParams)
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join("&");
 
