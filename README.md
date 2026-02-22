@@ -9,7 +9,7 @@ This server uses a hybrid approach for best performance and safety:
 | Operation | Method | Why |
 |-----------|--------|-----|
 | Read (search, get, list) | SQLite | Fast, reliable, no UI interaction |
-| Write (create, append, trash) | URL scheme | Safe, uses Bear's official API |
+| Write (create, append, prepend, trash, rename-tag, delete-tag) | URL scheme | Safe, uses Bear's official API |
 
 ## Requirements
 
@@ -79,10 +79,16 @@ claude mcp remove bear
 | `bear_search` | Search notes by text or tag |
 | `bear_get_note` | Get full content of a note by ID |
 | `bear_append` | Append text to an existing note |
+| `bear_prepend` | Prepend text to the beginning of an existing note |
 | `bear_replace_content` | Replace the entire content of an existing note |
 | `bear_list_tags` | List all tags with note counts |
 | `bear_list_by_tag` | List all notes with a specific tag |
+| `bear_rename_tag` | Rename an existing tag |
+| `bear_delete_tag` | Delete an existing tag from all notes |
 | `bear_trash_note` | Move a note to trash |
+| `bear_archive_note` | Archive a note |
+| `bear_unarchive_note` | Restore an archived note |
+| `bear_list_archived` | List all archived notes |
 
 ## Example Usage in Claude
 
@@ -93,6 +99,8 @@ Once the server is running, you can ask Claude things like:
 - "Create a new note titled 'Meeting Notes' with today's date"
 - "Show me all notes tagged with 'work'"
 - "Append this summary to my 'Daily Log' note"
+- "Rename my 'old-project' tag to 'archived-project'"
+- "Delete the 'temp' tag from all notes"
 
 ## Database Location
 

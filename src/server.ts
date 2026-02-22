@@ -8,6 +8,7 @@ import {
   searchNotes,
   getNoteContent,
   appendToNote,
+  prependToNote,
   replaceNoteContent,
   listNotesByTag,
   getAllTags,
@@ -15,6 +16,8 @@ import {
   archiveNote,
   unarchiveNote,
   listArchivedNotes,
+  renameTag,
+  deleteTag,
 } from "./bear.js";
 
 const server = new McpServer({
@@ -120,6 +123,26 @@ server.tool(
   }
 );
 
+// Tool: Prepend to note
+server.tool(
+  "bear_prepend",
+  "Prepend text to the beginning of an existing note",
+  {
+    noteId: z.string().describe("Note ID (from search results)"),
+    text: z.string().describe("Text to prepend")
+  },
+  async ({ noteId, text }): Promise<ToolResult> => {
+    try {
+      await prependToNote(noteId, text);
+      return {
+        content: [{ type: "text", text: `Prepended text to note: ${noteId}` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
 // Tool: Replace note content
 server.tool(
   "bear_replace_content",
@@ -171,6 +194,45 @@ server.tool(
       const result = { tag, count: notes.length, notes };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Rename tag
+server.tool(
+  "bear_rename_tag",
+  "Rename an existing tag in Bear",
+  {
+    name: z.string().describe("Current tag name (without #)"),
+    newName: z.string().describe("New tag name (without #)")
+  },
+  async ({ name, newName }): Promise<ToolResult> => {
+    try {
+      await renameTag(name, newName);
+      return {
+        content: [{ type: "text", text: `Renamed tag '${name}' to '${newName}'` }]
+      };
+    } catch (error) {
+      return handleError(error);
+    }
+  }
+);
+
+// Tool: Delete tag
+server.tool(
+  "bear_delete_tag",
+  "Delete an existing tag from all notes in Bear",
+  {
+    name: z.string().describe("Tag name to delete (without #)")
+  },
+  async ({ name }): Promise<ToolResult> => {
+    try {
+      await deleteTag(name);
+      return {
+        content: [{ type: "text", text: `Deleted tag: ${name}` }]
       };
     } catch (error) {
       return handleError(error);
