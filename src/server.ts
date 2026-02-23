@@ -146,15 +146,16 @@ server.tool(
 // Tool: Replace note content
 server.tool(
   "bear_replace_content",
-  "Replace the entire content of an existing note",
+  "Replace the entire content of an existing note. Always structures the note as: title (H1) first, then tags, then content.",
   {
     noteId: z.string().describe("Note ID (from search results)"),
-    text: z.string().describe("New content (Markdown)"),
-    tags: z.array(z.string()).optional().describe("Tags to set on the note")
+    title: z.string().describe("Note title (becomes the H1 heading on the first line)"),
+    text: z.string().describe("New content (Markdown), placed after title and tags"),
+    tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content)")
   },
-  async ({ noteId, text, tags }): Promise<ToolResult> => {
+  async ({ noteId, title, text, tags }): Promise<ToolResult> => {
     try {
-      await replaceNoteContent(noteId, text, tags);
+      await replaceNoteContent(noteId, title, text, tags);
       return {
         content: [{ type: "text", text: `Replaced content of note: ${noteId}` }]
       };

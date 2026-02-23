@@ -68,14 +68,14 @@ export const prependToNote = async (noteId: string, text: string): Promise<void>
   logger.info("Prepended to note", { noteId });
 };
 
-export const replaceNoteContent = async (noteId: string, text: string, tags?: string[]): Promise<void> => {
-  let fullText = "";
+export const replaceNoteContent = async (noteId: string, title: string, text: string, tags?: string[]): Promise<void> => {
+  let fullText = `# ${title}`;
   if (tags?.length) {
-    fullText = tags.map(t => `#${t}`).join(" ") + "\n\n";
+    fullText += "\n" + tags.map(t => `#${t}`).join(" ");
   }
-  fullText += text;
+  fullText += "\n\n" + text;
   await callBearUrl("add-text", { id: noteId, text: fullText, mode: "replace_all" });
-  logger.info("Replaced note content", { noteId, tags });
+  logger.info("Replaced note content", { noteId, title, tags });
 };
 
 export const trashNote = async (noteId: string): Promise<void> => {
