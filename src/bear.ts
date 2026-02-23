@@ -40,7 +40,7 @@ const callBearUrl = async (action: string, params: Record<string, string>): Prom
   const url = `bear://x-callback-url/${action}?${encodedParams}`;
 
   try {
-    await execFileAsync("open", [url]);
+    await execFileAsync("open", ["-g", url]);
     logger.debug("Called Bear URL", { action, params });
   } catch (error) {
     logger.error("Bear URL call failed", { action, params, error });
