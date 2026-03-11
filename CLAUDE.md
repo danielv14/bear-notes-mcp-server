@@ -31,7 +31,6 @@ This separation ensures fast reads while using Bear's official API for safe writ
 - `src/server.ts` - MCP server setup and tool definitions using `@modelcontextprotocol/sdk`
 - `src/bear.ts` - Core Bear operations (both SQLite reads and URL scheme writes)
 - `src/database.ts` - SQLite connection management with auto-discovery of Bear's database location
-- `src/logger.ts` - Structured logging to stderr (configurable via `BEAR_MCP_LOG_LEVEL`)
 
 ### Bear Database Schema
 

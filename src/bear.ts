@@ -1,7 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
-import { logger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,9 +40,7 @@ const callBearUrl = async (action: string, params: Record<string, string>): Prom
 
   try {
     await execFileAsync("open", ["-g", url]);
-    logger.debug("Called Bear URL", { action, params });
   } catch (error) {
-    logger.error("Bear URL call failed", { action, params, error });
     throw new BearError(`Failed to call Bear action: ${action}`, error);
   }
 };
@@ -55,17 +52,14 @@ export const createNote = async (title: string, text: string, tags?: string[]): 
   }
   fullText += text;
   await callBearUrl("create", { title, text: fullText });
-  logger.info("Created note", { title, tags });
 };
 
 export const appendToNote = async (noteId: string, text: string): Promise<void> => {
   await callBearUrl("add-text", { id: noteId, text, mode: "append" });
-  logger.info("Appended to note", { noteId });
 };
 
 export const prependToNote = async (noteId: string, text: string): Promise<void> => {
   await callBearUrl("add-text", { id: noteId, text, mode: "prepend" });
-  logger.info("Prepended to note", { noteId });
 };
 
 export const replaceNoteContent = async (noteId: string, title: string, text: string, tags?: string[]): Promise<void> => {
@@ -75,32 +69,26 @@ export const replaceNoteContent = async (noteId: string, title: string, text: st
   }
   fullText += "\n\n" + text;
   await callBearUrl("add-text", { id: noteId, text: fullText, mode: "replace_all" });
-  logger.info("Replaced note content", { noteId, title, tags });
 };
 
 export const trashNote = async (noteId: string): Promise<void> => {
   await callBearUrl("trash", { id: noteId });
-  logger.info("Trashed note", { noteId });
 };
 
 export const archiveNote = async (noteId: string): Promise<void> => {
   await callBearUrl("archive", { id: noteId });
-  logger.info("Archived note", { noteId });
 };
 
 export const unarchiveNote = async (noteId: string): Promise<void> => {
   await callBearUrl("unarchive", { id: noteId });
-  logger.info("Unarchived note", { noteId });
 };
 
 export const renameTag = async (name: string, newName: string): Promise<void> => {
   await callBearUrl("rename-tag", { name, new_name: newName });
-  logger.info("Renamed tag", { name, newName });
 };
 
 export const deleteTag = async (name: string): Promise<void> => {
   await callBearUrl("delete-tag", { name });
-  logger.info("Deleted tag", { name });
 };
 
 // ============================================================================
@@ -209,7 +197,6 @@ export const searchNotes = (term?: string, tag?: string): Note[] => {
       content: undefined // Don't include full content in search results
     }));
   } catch (error) {
-    logger.error("Search failed", { term, tag, error });
     throw new DatabaseError("Failed to search notes", error);
   }
 };
@@ -240,7 +227,6 @@ export const getNoteContent = (noteId: string): Note | null => {
       tags: getNoteTags(noteId)
     };
   } catch (error) {
-    logger.error("Failed to get note", { noteId, error });
     throw new DatabaseError("Failed to get note content", error);
   }
 };
@@ -273,7 +259,6 @@ export const listNotesByTag = (tag: string): Note[] => {
       tags: tagsByNote[note.id] ?? []
     }));
   } catch (error) {
-    logger.error("Failed to list notes by tag", { tag, error });
     throw new DatabaseError("Failed to list notes by tag", error);
   }
 };
@@ -296,7 +281,6 @@ export const getAllTags = (): Tag[] => {
 
     return db.prepare(query).all() as Tag[];
   } catch (error) {
-    logger.error("Failed to get tags", { error });
     throw new DatabaseError("Failed to get tags", error);
   }
 };
@@ -326,7 +310,6 @@ export const listArchivedNotes = (): Note[] => {
       tags: tagsByNote[note.id] ?? []
     }));
   } catch (error) {
-    logger.error("Failed to list archived notes", { error });
     throw new DatabaseError("Failed to list archived notes", error);
   }
 };

@@ -2,7 +2,6 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { logger } from "./logger.js";
 
 // Possible database locations
 const DB_PATHS = [
@@ -28,7 +27,6 @@ export class DatabaseError extends Error {
 const findDatabasePath = (): string => {
   for (const path of DB_PATHS) {
     if (existsSync(path)) {
-      logger.info("Found Bear database", { path });
       return path;
     }
   }
@@ -45,11 +43,8 @@ export const getDatabase = (): Database => {
     const dbPath = findDatabasePath();
 
     try {
-      // Open in readonly mode for safety
       db = new Database(dbPath, { readonly: true });
-      logger.info("Connected to Bear database");
     } catch (error) {
-      logger.error("Failed to open database", { error });
       throw new DatabaseError("Failed to open Bear database", error);
     }
   }
@@ -61,6 +56,5 @@ export const closeDatabase = (): void => {
   if (db) {
     db.close();
     db = null;
-    logger.info("Closed Bear database connection");
   }
 };

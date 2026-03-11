@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { logger } from "./logger.js";
 import { closeDatabase } from "./database.js";
 import {
   createNote,
@@ -29,61 +28,58 @@ type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: tr
 
 const handleError = (error: unknown): ToolResult => {
   const message = error instanceof Error ? error.message : "An unknown error occurred";
-  logger.error("Tool execution failed", { error });
-
   return {
     content: [{ type: "text", text: `Error: ${message}` }],
     isError: true
   };
 };
 
-// Tool: Create note
-server.tool(
+server.registerTool(
   "bear_create_note",
-  "Create a new note in Bear",
   {
-    title: z.string().describe("Note title"),
-    text: z.string().describe("Note content (Markdown)"),
-    tags: z.array(z.string()).optional().describe("Tags to add to the note")
+    description: "Create a new note in Bear",
+    inputSchema: z.object({
+      title: z.string().describe("Note title"),
+      text: z.string().describe("Note content (Markdown)"),
+      tags: z.array(z.string()).optional().describe("Tags to add to the note")
+    })
   },
   async ({ title, text, tags }): Promise<ToolResult> => {
     try {
       await createNote(title, text, tags);
-      return {
-        content: [{ type: "text", text: `Created note: ${title}` }]
-      };
+      return { content: [{ type: "text", text: `Created note: ${title}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Search notes
-server.tool(
+server.registerTool(
   "bear_search",
-  "Search for notes in Bear by text or tag",
   {
-    term: z.string().optional().describe("Search term (free text)"),
-    tag: z.string().optional().describe("Filter by tag (without #)")
+    description: "Search for notes in Bear by text or tag",
+    inputSchema: z.object({
+      term: z.string().optional().describe("Search term (free text)"),
+      tag: z.string().optional().describe("Filter by tag (without #)")
+    })
   },
   async ({ term, tag }): Promise<ToolResult> => {
     try {
       const notes = searchNotes(term, tag);
-      return {
-        content: [{ type: "text", text: JSON.stringify(notes, null, 2) }]
-      };
+      return { content: [{ type: "text", text: JSON.stringify(notes, null, 2) }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Get note content
-server.tool(
+server.registerTool(
   "bear_get_note",
-  "Get the full content of a specific note",
   {
-    noteId: z.string().describe("Note ID (from search results)")
+    description: "Get the full content of a specific note",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID (from search results)")
+    })
   },
   async ({ noteId }): Promise<ToolResult> => {
     try {
@@ -94,222 +90,209 @@ server.tool(
           isError: true
         };
       }
-      return {
-        content: [{ type: "text", text: JSON.stringify(note, null, 2) }]
-      };
+      return { content: [{ type: "text", text: JSON.stringify(note, null, 2) }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Append to note
-server.tool(
+server.registerTool(
   "bear_append",
-  "Append text to an existing note",
   {
-    noteId: z.string().describe("Note ID (from search results)"),
-    text: z.string().describe("Text to append")
+    description: "Append text to an existing note",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID (from search results)"),
+      text: z.string().describe("Text to append")
+    })
   },
   async ({ noteId, text }): Promise<ToolResult> => {
     try {
       await appendToNote(noteId, text);
-      return {
-        content: [{ type: "text", text: `Appended text to note: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Appended text to note: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Prepend to note
-server.tool(
+server.registerTool(
   "bear_prepend",
-  "Prepend text to the beginning of an existing note",
   {
-    noteId: z.string().describe("Note ID (from search results)"),
-    text: z.string().describe("Text to prepend")
+    description: "Prepend text to the beginning of an existing note",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID (from search results)"),
+      text: z.string().describe("Text to prepend")
+    })
   },
   async ({ noteId, text }): Promise<ToolResult> => {
     try {
       await prependToNote(noteId, text);
-      return {
-        content: [{ type: "text", text: `Prepended text to note: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Prepended text to note: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Replace note content
-server.tool(
+server.registerTool(
   "bear_replace_content",
-  "Replace the entire content of an existing note. Always structures the note as: title (H1) first, then tags, then content.",
   {
-    noteId: z.string().describe("Note ID (from search results)"),
-    title: z.string().describe("Note title (becomes the H1 heading on the first line)"),
-    text: z.string().describe("New content (Markdown), placed after title and tags"),
-    tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content)")
+    description: "Replace the entire content of an existing note. Always structures the note as: title (H1) first, then tags, then content.",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID (from search results)"),
+      title: z.string().describe("Note title (becomes the H1 heading on the first line)"),
+      text: z.string().describe("New content (Markdown), placed after title and tags"),
+      tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content)")
+    })
   },
   async ({ noteId, title, text, tags }): Promise<ToolResult> => {
     try {
       await replaceNoteContent(noteId, title, text, tags);
-      return {
-        content: [{ type: "text", text: `Replaced content of note: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Replaced content of note: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: List all tags
-server.tool(
+server.registerTool(
   "bear_list_tags",
-  "List all tags in Bear with note counts",
-  {},
+  {
+    description: "List all tags in Bear with note counts",
+    inputSchema: z.object({})
+  },
   async (): Promise<ToolResult> => {
     try {
       const tags = getAllTags();
-      return {
-        content: [{ type: "text", text: JSON.stringify(tags, null, 2) }]
-      };
+      return { content: [{ type: "text", text: JSON.stringify(tags, null, 2) }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: List notes by tag
-server.tool(
+server.registerTool(
   "bear_list_by_tag",
-  "List all notes with a specific tag",
   {
-    tag: z.string().describe("Tag to filter by (without #)")
+    description: "List all notes with a specific tag",
+    inputSchema: z.object({
+      tag: z.string().describe("Tag to filter by (without #)")
+    })
   },
   async ({ tag }): Promise<ToolResult> => {
     try {
       const notes = listNotesByTag(tag);
       const result = { tag, count: notes.length, notes };
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
-      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Rename tag
-server.tool(
+server.registerTool(
   "bear_rename_tag",
-  "Rename an existing tag in Bear",
   {
-    name: z.string().describe("Current tag name (without #)"),
-    newName: z.string().describe("New tag name (without #)")
+    description: "Rename an existing tag in Bear",
+    inputSchema: z.object({
+      name: z.string().describe("Current tag name (without #)"),
+      newName: z.string().describe("New tag name (without #)")
+    })
   },
   async ({ name, newName }): Promise<ToolResult> => {
     try {
       await renameTag(name, newName);
-      return {
-        content: [{ type: "text", text: `Renamed tag '${name}' to '${newName}'` }]
-      };
+      return { content: [{ type: "text", text: `Renamed tag '${name}' to '${newName}'` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Delete tag
-server.tool(
+server.registerTool(
   "bear_delete_tag",
-  "Delete an existing tag from all notes in Bear",
   {
-    name: z.string().describe("Tag name to delete (without #)")
+    description: "Delete an existing tag from all notes in Bear",
+    inputSchema: z.object({
+      name: z.string().describe("Tag name to delete (without #)")
+    })
   },
   async ({ name }): Promise<ToolResult> => {
     try {
       await deleteTag(name);
-      return {
-        content: [{ type: "text", text: `Deleted tag: ${name}` }]
-      };
+      return { content: [{ type: "text", text: `Deleted tag: ${name}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Trash note
-server.tool(
+server.registerTool(
   "bear_trash_note",
-  "Move a note to trash",
   {
-    noteId: z.string().describe("Note ID")
+    description: "Move a note to trash",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID")
+    })
   },
   async ({ noteId }): Promise<ToolResult> => {
     try {
       await trashNote(noteId);
-      return {
-        content: [{ type: "text", text: `Moved note to trash: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Moved note to trash: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Archive note
-server.tool(
+server.registerTool(
   "bear_archive_note",
-  "Archive a note (moves it out of main view but keeps it accessible)",
   {
-    noteId: z.string().describe("Note ID")
+    description: "Archive a note (moves it out of main view but keeps it accessible)",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID")
+    })
   },
   async ({ noteId }): Promise<ToolResult> => {
     try {
       await archiveNote(noteId);
-      return {
-        content: [{ type: "text", text: `Archived note: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Archived note: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: Unarchive note
-server.tool(
+server.registerTool(
   "bear_unarchive_note",
-  "Restore an archived note back to the main view",
   {
-    noteId: z.string().describe("Note ID")
+    description: "Restore an archived note back to the main view",
+    inputSchema: z.object({
+      noteId: z.string().describe("Note ID")
+    })
   },
   async ({ noteId }): Promise<ToolResult> => {
     try {
       await unarchiveNote(noteId);
-      return {
-        content: [{ type: "text", text: `Unarchived note: ${noteId}` }]
-      };
+      return { content: [{ type: "text", text: `Unarchived note: ${noteId}` }] };
     } catch (error) {
       return handleError(error);
     }
   }
 );
 
-// Tool: List archived notes
-server.tool(
+server.registerTool(
   "bear_list_archived",
-  "List all archived notes",
-  {},
+  {
+    description: "List all archived notes",
+    inputSchema: z.object({})
+  },
   async (): Promise<ToolResult> => {
     try {
       const notes = listArchivedNotes();
       const result = { count: notes.length, notes };
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
-      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return handleError(error);
     }
@@ -329,15 +312,13 @@ process.on("SIGTERM", () => {
 
 // Start server
 const main = async () => {
-  logger.info("Starting Bear MCP server");
-
   const transport = new StdioServerTransport();
 
   try {
     await server.connect(transport);
-    logger.info("Bear MCP server connected");
+    console.error("Bear MCP server connected");
   } catch (error) {
-    logger.error("Failed to start server", { error });
+    console.error("Failed to start server", error);
     process.exit(1);
   }
 };
