@@ -13,8 +13,7 @@ import {
 const CORE_DATA_2021 = 1609459200 - 978307200;
 const READABLE_2021 = "2021-01-01 00:00:00";
 
-const buildFixture = (): Database => {
-  const db = new Database(":memory:");
+const createBearTables = (db: Database): void => {
   db.run(`CREATE TABLE ZSFNOTE (
     Z_PK INTEGER PRIMARY KEY,
     ZUNIQUEIDENTIFIER TEXT,
@@ -27,6 +26,11 @@ const buildFixture = (): Database => {
   )`);
   db.run(`CREATE TABLE ZSFNOTETAG (Z_PK INTEGER PRIMARY KEY, ZTITLE TEXT)`);
   db.run(`CREATE TABLE Z_5TAGS (Z_5NOTES INTEGER, Z_13TAGS INTEGER)`);
+};
+
+const buildFixture = (): Database => {
+  const db = new Database(":memory:");
+  createBearTables(db);
 
   db.run(
     `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
@@ -106,5 +110,20 @@ describe("getAllTags", () => {
 describe("listArchivedNotes", () => {
   test("returns archived but not trashed notes", () => {
     expect(listArchivedNotes(db).map(n => n.id)).toEqual(["NOTE-C"]);
+  });
+});
+
+describe("NULL note body", () => {
+  test("getNoteContent omits content rather than returning null", () => {
+    const nullDb = new Database(":memory:");
+    createBearTables(nullDb);
+    nullDb.run(
+      `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
+        (1, 'NOTE-NULL', 'Empty', NULL, ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0)`
+    );
+    const note = getNoteContent("NOTE-NULL", nullDb);
+    expect(note).not.toBeNull();
+    expect(note?.title).toBe("Empty");
+    expect("content" in note!).toBe(false);
   });
 });

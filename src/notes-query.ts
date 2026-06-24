@@ -41,9 +41,12 @@ export const toNote = (row: NoteRow, tags: string[] = []): Note => {
     title: row.title,
     tags,
   };
-  if (row.content !== undefined) note.content = row.content;
-  if (row.createdAt !== undefined) note.createdAt = row.createdAt;
-  if (row.modifiedAt !== undefined) note.modifiedAt = row.modifiedAt;
-  if (row.isTrashed !== undefined) note.isTrashed = Boolean(row.isTrashed);
+  // `!= null` rather than `!== undefined`: SQLite returns absent/NULL columns
+  // as JS null, and content/createdAt/modifiedAt are typed string | undefined,
+  // so a NULL must be omitted, not assigned through as null.
+  if (row.content != null) note.content = row.content;
+  if (row.createdAt != null) note.createdAt = row.createdAt;
+  if (row.modifiedAt != null) note.modifiedAt = row.modifiedAt;
+  if (row.isTrashed != null) note.isTrashed = Boolean(row.isTrashed);
   return note;
 };

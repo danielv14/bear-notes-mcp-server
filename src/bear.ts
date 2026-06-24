@@ -41,13 +41,7 @@ export class BearError extends Error {
 export type BearUrlRunner = (url: string) => Promise<void>;
 
 const openBearUrl: BearUrlRunner = async (url) => {
-  try {
-    await execFileAsync("open", ["-g", url]);
-  } catch (error) {
-    // The URL carries the action (bear://x-callback-url/<action>?...), so this
-    // keeps the per-action diagnosability the previous message had.
-    throw new BearError(`Failed to open Bear URL: ${url}`, error);
-  }
+  await execFileAsync("open", ["-g", url]);
 };
 
 // The seam between the pure URL construction and actually launching Bear.
@@ -63,7 +57,13 @@ export const resetBearUrlRunner = (): void => {
 };
 
 const callBear = async (action: string, params: Record<string, string>): Promise<void> => {
-  await runBearUrl(buildBearUrl(action, params));
+  try {
+    await runBearUrl(buildBearUrl(action, params));
+  } catch (error) {
+    // Report the action, never the URL: the URL embeds the encoded note title,
+    // tags, and body, which must not leak into error messages or logs.
+    throw new BearError(`Failed to call Bear action: ${action}`, error);
+  }
 };
 
 export const createNote = async (title: string, text: string, tags?: string[]): Promise<void> => {

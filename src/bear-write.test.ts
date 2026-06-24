@@ -60,3 +60,21 @@ describe("write operations build the expected Bear URL", () => {
     expect(captured).toEqual([url("trash", "id=NOTE-ID&show_window=no")]);
   });
 });
+
+describe("write failures", () => {
+  test("report the action and never leak the note content into the error", async () => {
+    setBearUrlRunner(async () => {
+      throw new Error("open failed");
+    });
+    let caught: Error | undefined;
+    try {
+      await createNote("Secret Title", "secret body", ["private"]);
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught?.message).toBe("Failed to call Bear action: create");
+    expect(caught?.message).not.toContain("Secret Title");
+    expect(caught?.message).not.toContain("secret body");
+    expect(caught?.message).not.toContain("private");
+  });
+});
