@@ -5,7 +5,8 @@
   "scripts": {
     "start": "bun run src/server.ts",
     "build": "bun build src/server.ts --outfile dist/server.js --target bun",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

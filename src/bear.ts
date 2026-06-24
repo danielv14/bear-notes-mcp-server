@@ -1,6 +1,14 @@
+import type { Database } from "bun:sqlite";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
+import { renderNoteMarkdown, buildBearUrl } from "./note-format.js";
+import {
+  timestampColumns,
+  liveNotesFilter,
+  toNote,
+  type NoteRow,
+} from "./notes-query.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,79 +38,81 @@ export class BearError extends Error {
 // WRITE OPERATIONS (via URL scheme - safe)
 // ============================================================================
 
-const callBearUrl = async (action: string, params: Record<string, string>): Promise<void> => {
-  const allParams = { ...params, show_window: "no" };
-  const encodedParams = Object.entries(allParams)
-    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join("&");
+export type BearUrlRunner = (url: string) => Promise<void>;
 
-  const url = `bear://x-callback-url/${action}?${encodedParams}`;
+const openBearUrl: BearUrlRunner = async (url) => {
+  await execFileAsync("open", ["-g", url]);
+};
 
+// The seam between the pure URL construction and actually launching Bear.
+// Production runs `open`; tests swap in a runner that captures the URL.
+let runBearUrl: BearUrlRunner = openBearUrl;
+
+export const setBearUrlRunner = (runner: BearUrlRunner): void => {
+  runBearUrl = runner;
+};
+
+export const resetBearUrlRunner = (): void => {
+  runBearUrl = openBearUrl;
+};
+
+const callBear = async (action: string, params: Record<string, string>): Promise<void> => {
   try {
-    await execFileAsync("open", ["-g", url]);
+    await runBearUrl(buildBearUrl(action, params));
   } catch (error) {
+    // Report the action, never the URL: the URL embeds the encoded note title,
+    // tags, and body, which must not leak into error messages or logs.
     throw new BearError(`Failed to call Bear action: ${action}`, error);
   }
 };
 
 export const createNote = async (title: string, text: string, tags?: string[]): Promise<void> => {
-  let fullText = "";
-  if (tags?.length) {
-    fullText = tags.map(t => `#${t}`).join(" ") + "\n\n";
-  }
-  fullText += text;
-  await callBearUrl("create", { title, text: fullText });
+  await callBear("create", { text: renderNoteMarkdown({ title, text, tags }) });
 };
 
 export const appendToNote = async (noteId: string, text: string): Promise<void> => {
-  await callBearUrl("add-text", { id: noteId, text, mode: "append" });
+  await callBear("add-text", { id: noteId, text, mode: "append" });
 };
 
 export const prependToNote = async (noteId: string, text: string): Promise<void> => {
-  await callBearUrl("add-text", { id: noteId, text, mode: "prepend" });
+  await callBear("add-text", { id: noteId, text, mode: "prepend" });
 };
 
 export const replaceNoteContent = async (noteId: string, title: string, text: string, tags?: string[]): Promise<void> => {
-  let fullText = `# ${title}`;
-  if (tags?.length) {
-    fullText += "\n" + tags.map(t => `#${t}`).join(" ");
-  }
-  fullText += "\n\n" + text;
-  await callBearUrl("add-text", { id: noteId, text: fullText, mode: "replace_all" });
+  await callBear("add-text", {
+    id: noteId,
+    text: renderNoteMarkdown({ title, text, tags }),
+    mode: "replace_all",
+  });
 };
 
 export const trashNote = async (noteId: string): Promise<void> => {
-  await callBearUrl("trash", { id: noteId });
+  await callBear("trash", { id: noteId });
 };
 
 export const archiveNote = async (noteId: string): Promise<void> => {
-  await callBearUrl("archive", { id: noteId });
+  await callBear("archive", { id: noteId });
 };
 
 export const unarchiveNote = async (noteId: string): Promise<void> => {
-  await callBearUrl("unarchive", { id: noteId });
+  await callBear("unarchive", { id: noteId });
 };
 
 export const renameTag = async (name: string, newName: string): Promise<void> => {
-  await callBearUrl("rename-tag", { name, new_name: newName });
+  await callBear("rename-tag", { name, new_name: newName });
 };
 
 export const deleteTag = async (name: string): Promise<void> => {
-  await callBearUrl("delete-tag", { name });
+  await callBear("delete-tag", { name });
 };
 
 // ============================================================================
 // READ OPERATIONS (via SQLite - fast)
 // ============================================================================
 
-const getNoteTags = (noteId: string): string[] => {
-  return getNoteTagsBatch([noteId])[noteId] ?? [];
-};
-
-const getNoteTagsBatch = (noteIds: string[]): Record<string, string[]> => {
+const getNoteTagsBatch = (db: Database, noteIds: string[]): Record<string, string[]> => {
   if (noteIds.length === 0) return {};
 
-  const db = getDatabase();
   const placeholders = noteIds.map(() => "?").join(", ");
 
   const query = `
@@ -124,153 +134,113 @@ const getNoteTagsBatch = (noteIds: string[]): Record<string, string[]> => {
   return result;
 };
 
-export const searchNotes = (term?: string, tag?: string): Note[] => {
-  const db = getDatabase();
+const getNoteTags = (db: Database, noteId: string): string[] =>
+  getNoteTagsBatch(db, [noteId])[noteId] ?? [];
 
+// Attaches batched tags to a set of rows and normalizes them to Notes.
+const withTags = (db: Database, rows: NoteRow[]): Note[] => {
+  const tagsByNote = getNoteTagsBatch(db, rows.map(row => row.id));
+  return rows.map(row => toNote(row, tagsByNote[row.id] ?? []));
+};
+
+export const searchNotes = (term?: string, tag?: string, db: Database = getDatabase()): Note[] => {
   try {
     let query: string;
     let params: string[];
 
     if (tag) {
-      // Search by tag
       query = `
         SELECT DISTINCT
           n.ZUNIQUEIDENTIFIER as id,
           n.ZTITLE as title,
-          n.ZTEXT as content,
-          datetime(n.ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-          datetime(n.ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt,
+          ${timestampColumns("n")},
           n.ZTRASHED as isTrashed
         FROM ZSFNOTE n
         JOIN Z_5TAGS nt ON n.Z_PK = nt.Z_5NOTES
         JOIN ZSFNOTETAG t ON nt.Z_13TAGS = t.Z_PK
         WHERE t.ZTITLE LIKE ?
-          AND n.ZTRASHED = 0
-          AND n.ZARCHIVED = 0
+          AND ${liveNotesFilter("n")}
         ORDER BY n.ZMODIFICATIONDATE DESC
         LIMIT 100
       `;
       params = [`%${tag}%`];
-    } else if (term) {
-      // Search by text
-      query = `
-        SELECT
-          ZUNIQUEIDENTIFIER as id,
-          ZTITLE as title,
-          ZTEXT as content,
-          datetime(ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-          datetime(ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt,
-          ZTRASHED as isTrashed
-        FROM ZSFNOTE
-        WHERE (ZTITLE LIKE ? OR ZTEXT LIKE ?)
-          AND ZTRASHED = 0
-          AND ZARCHIVED = 0
-        ORDER BY ZMODIFICATIONDATE DESC
-        LIMIT 100
-      `;
-      params = [`%${term}%`, `%${term}%`];
     } else {
-      // Return recent notes
+      // Text search and "recent notes" differ only by an optional term filter
+      // and the row limit, so they share one query.
+      const termFilter = term ? `(ZTITLE LIKE ? OR ZTEXT LIKE ?) AND ` : "";
+      const limit = term ? 100 : 50;
       query = `
         SELECT
           ZUNIQUEIDENTIFIER as id,
           ZTITLE as title,
-          datetime(ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-          datetime(ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt,
+          ${timestampColumns()},
           ZTRASHED as isTrashed
         FROM ZSFNOTE
-        WHERE ZTRASHED = 0
-          AND ZARCHIVED = 0
+        WHERE ${termFilter}${liveNotesFilter()}
         ORDER BY ZMODIFICATIONDATE DESC
-        LIMIT 50
+        LIMIT ${limit}
       `;
-      params = [];
+      params = term ? [`%${term}%`, `%${term}%`] : [];
     }
 
-    const rows = db.prepare(query).all(...params) as Note[];
-    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
-
-    return rows.map(note => ({
-      ...note,
-      isTrashed: Boolean(note.isTrashed),
-      tags: tagsByNote[note.id] ?? [],
-      content: undefined // Don't include full content in search results
-    }));
+    const rows = db.prepare(query).all(...params) as NoteRow[];
+    return withTags(db, rows);
   } catch (error) {
     throw new DatabaseError("Failed to search notes", error);
   }
 };
 
-export const getNoteContent = (noteId: string): Note | null => {
-  const db = getDatabase();
-
+export const getNoteContent = (noteId: string, db: Database = getDatabase()): Note | null => {
   try {
     const query = `
       SELECT
         ZUNIQUEIDENTIFIER as id,
         ZTITLE as title,
         ZTEXT as content,
-        datetime(ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-        datetime(ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt,
+        ${timestampColumns()},
         ZTRASHED as isTrashed
       FROM ZSFNOTE
       WHERE ZUNIQUEIDENTIFIER = ?
     `;
 
-    const note = db.prepare(query).get(noteId) as Note | undefined;
+    const row = db.prepare(query).get(noteId) as NoteRow | undefined;
+    if (!row) return null;
 
-    if (!note) return null;
-
-    return {
-      ...note,
-      isTrashed: Boolean(note.isTrashed),
-      tags: getNoteTags(noteId)
-    };
+    return toNote(row, getNoteTags(db, noteId));
   } catch (error) {
     throw new DatabaseError("Failed to get note content", error);
   }
 };
 
-export const listNotesByTag = (tag: string): Note[] => {
-  const db = getDatabase();
-
+export const listNotesByTag = (tag: string, db: Database = getDatabase()): Note[] => {
   try {
     const query = `
       SELECT DISTINCT
         n.ZUNIQUEIDENTIFIER as id,
         n.ZTITLE as title,
-        datetime(n.ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-        datetime(n.ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt
+        ${timestampColumns("n")}
       FROM ZSFNOTE n
       JOIN Z_5TAGS nt ON n.Z_PK = nt.Z_5NOTES
       JOIN ZSFNOTETAG t ON nt.Z_13TAGS = t.Z_PK
       WHERE LOWER(t.ZTITLE) = LOWER(?)
-        AND n.ZTRASHED = 0
-        AND n.ZARCHIVED = 0
+        AND ${liveNotesFilter("n")}
       ORDER BY n.ZMODIFICATIONDATE DESC
       LIMIT 100
     `;
 
-    const rows = db.prepare(query).all(tag) as Note[];
-    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
-
-    return rows.map(note => ({
-      ...note,
-      tags: tagsByNote[note.id] ?? []
-    }));
+    const rows = db.prepare(query).all(tag) as NoteRow[];
+    return withTags(db, rows);
   } catch (error) {
     throw new DatabaseError("Failed to list notes by tag", error);
   }
 };
 
-export const getAllTags = (): Tag[] => {
-  const db = getDatabase();
-
+export const getAllTags = (db: Database = getDatabase()): Tag[] => {
   try {
     const query = `
       SELECT
         t.ZTITLE as name,
-        COUNT(DISTINCT CASE WHEN n.ZTRASHED = 0 AND n.ZARCHIVED = 0 THEN n.Z_PK END) as noteCount
+        COUNT(DISTINCT CASE WHEN ${liveNotesFilter("n")} THEN n.Z_PK END) as noteCount
       FROM ZSFNOTETAG t
       LEFT JOIN Z_5TAGS nt ON t.Z_PK = nt.Z_13TAGS
       LEFT JOIN ZSFNOTE n ON nt.Z_5NOTES = n.Z_PK
@@ -285,16 +255,13 @@ export const getAllTags = (): Tag[] => {
   }
 };
 
-export const listArchivedNotes = (): Note[] => {
-  const db = getDatabase();
-
+export const listArchivedNotes = (db: Database = getDatabase()): Note[] => {
   try {
     const query = `
       SELECT
         ZUNIQUEIDENTIFIER as id,
         ZTITLE as title,
-        datetime(ZCREATIONDATE + 978307200, 'unixepoch') as createdAt,
-        datetime(ZMODIFICATIONDATE + 978307200, 'unixepoch') as modifiedAt
+        ${timestampColumns()}
       FROM ZSFNOTE
       WHERE ZARCHIVED = 1
         AND ZTRASHED = 0
@@ -302,13 +269,8 @@ export const listArchivedNotes = (): Note[] => {
       LIMIT 100
     `;
 
-    const rows = db.prepare(query).all() as Note[];
-    const tagsByNote = getNoteTagsBatch(rows.map(n => n.id));
-
-    return rows.map(note => ({
-      ...note,
-      tags: tagsByNote[note.id] ?? []
-    }));
+    const rows = db.prepare(query).all() as NoteRow[];
+    return withTags(db, rows);
   } catch (error) {
     throw new DatabaseError("Failed to list archived notes", error);
   }
