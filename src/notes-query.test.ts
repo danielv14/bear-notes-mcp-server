@@ -4,6 +4,7 @@ import {
   timestampColumns,
   liveNotesFilter,
   toNote,
+  escapeLike,
 } from "./notes-query";
 
 describe("query fragments", () => {
@@ -45,5 +46,20 @@ describe("toNote", () => {
 
   test("attaches the supplied tags", () => {
     expect(toNote({ id: "1", title: "A" }, ["work"]).tags).toEqual(["work"]);
+  });
+});
+
+describe("escapeLike", () => {
+  test("escapes LIKE wildcards so they match literally", () => {
+    expect(escapeLike("50%")).toBe("50\\%");
+    expect(escapeLike("a_b")).toBe("a\\_b");
+  });
+
+  test("escapes the escape character itself", () => {
+    expect(escapeLike("a\\b")).toBe("a\\\\b");
+  });
+
+  test("leaves ordinary text untouched", () => {
+    expect(escapeLike("hello world")).toBe("hello world");
   });
 });

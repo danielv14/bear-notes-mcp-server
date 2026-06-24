@@ -7,6 +7,8 @@ import {
   timestampColumns,
   liveNotesFilter,
   toNote,
+  escapeLike,
+  LIKE_ESCAPE_CLAUSE,
   type NoteRow,
 } from "./notes-query.js";
 
@@ -145,10 +147,21 @@ const withTags = (db: Database, rows: NoteRow[]): Note[] => {
 
 export const searchNotes = (term?: string, tag?: string, db: Database = getDatabase()): Note[] => {
   try {
+    // A blank term means "no text filter", the same as omitting it. Wildcards
+    // in the term are escaped so they match literally (e.g. "50%" finds "50%",
+    // not everything containing "50").
+    const textTerm = term && term.trim() ? term : undefined;
+    const likePattern = textTerm ? `%${escapeLike(textTerm)}%` : undefined;
+
     let query: string;
     let params: string[];
 
     if (tag) {
+      // Exact, case-insensitive tag match (consistent with listNotesByTag) plus
+      // an optional text filter, so term and tag intersect.
+      const textFilter = likePattern
+        ? `AND (n.ZTITLE LIKE ? ${LIKE_ESCAPE_CLAUSE} OR n.ZTEXT LIKE ? ${LIKE_ESCAPE_CLAUSE})`
+        : "";
       query = `
         SELECT DISTINCT
           n.ZUNIQUEIDENTIFIER as id,
@@ -158,17 +171,20 @@ export const searchNotes = (term?: string, tag?: string, db: Database = getDatab
         FROM ZSFNOTE n
         JOIN Z_5TAGS nt ON n.Z_PK = nt.Z_5NOTES
         JOIN ZSFNOTETAG t ON nt.Z_13TAGS = t.Z_PK
-        WHERE t.ZTITLE LIKE ?
+        WHERE LOWER(t.ZTITLE) = LOWER(?)
           AND ${liveNotesFilter("n")}
+          ${textFilter}
         ORDER BY n.ZMODIFICATIONDATE DESC
         LIMIT 100
       `;
-      params = [`%${tag}%`];
+      params = likePattern ? [tag, likePattern, likePattern] : [tag];
     } else {
       // Text search and "recent notes" differ only by an optional term filter
       // and the row limit, so they share one query.
-      const termFilter = term ? `(ZTITLE LIKE ? OR ZTEXT LIKE ?) AND ` : "";
-      const limit = term ? 100 : 50;
+      const termFilter = likePattern
+        ? `(ZTITLE LIKE ? ${LIKE_ESCAPE_CLAUSE} OR ZTEXT LIKE ? ${LIKE_ESCAPE_CLAUSE}) AND `
+        : "";
+      const limit = likePattern ? 100 : 50;
       query = `
         SELECT
           ZUNIQUEIDENTIFIER as id,
@@ -180,7 +196,7 @@ export const searchNotes = (term?: string, tag?: string, db: Database = getDatab
         ORDER BY ZMODIFICATIONDATE DESC
         LIMIT ${limit}
       `;
-      params = term ? [`%${term}%`, `%${term}%`] : [];
+      params = likePattern ? [likePattern, likePattern] : [];
     }
 
     const rows = db.prepare(query).all(...params) as NoteRow[];

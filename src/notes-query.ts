@@ -33,6 +33,18 @@ export type NoteRow = Omit<Note, "tags" | "isTrashed"> & {
   isTrashed?: number | boolean;
 };
 
+// The escape character paired with LIKE_ESCAPE_CLAUSE below.
+const LIKE_ESCAPE_CHAR = "\\";
+
+// Append this to a LIKE so the wildcards escaped by escapeLike are honored.
+export const LIKE_ESCAPE_CLAUSE = `ESCAPE '${LIKE_ESCAPE_CHAR}'`;
+
+// Escapes the LIKE metacharacters (% _ and the escape char itself) so a user's
+// search term matches literally instead of as a wildcard pattern. The result
+// must be bound with a LIKE that carries LIKE_ESCAPE_CLAUSE.
+export const escapeLike = (value: string): string =>
+  value.replace(/[\\%_]/g, char => `${LIKE_ESCAPE_CHAR}${char}`);
+
 // Maps a raw query row to a Note, applying the shared normalization rules:
 // SQLite returns isTrashed as 0/1, and tags are attached separately.
 export const toNote = (row: NoteRow, tags: string[] = []): Note => {
