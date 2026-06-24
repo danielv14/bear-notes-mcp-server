@@ -7,26 +7,7 @@ import {
   getAllTags,
   listArchivedNotes,
 } from "./bear";
-
-// 2021-01-01 00:00:00 UTC as a Core Data timestamp (unix 1609459200 minus the
-// epoch offset). Reading it back through the queries should yield the datetime.
-const CORE_DATA_2021 = 1609459200 - 978307200;
-const READABLE_2021 = "2021-01-01 00:00:00";
-
-const createBearTables = (db: Database): void => {
-  db.run(`CREATE TABLE ZSFNOTE (
-    Z_PK INTEGER PRIMARY KEY,
-    ZUNIQUEIDENTIFIER TEXT,
-    ZTITLE TEXT,
-    ZTEXT TEXT,
-    ZCREATIONDATE REAL,
-    ZMODIFICATIONDATE REAL,
-    ZTRASHED INTEGER,
-    ZARCHIVED INTEGER
-  )`);
-  db.run(`CREATE TABLE ZSFNOTETAG (Z_PK INTEGER PRIMARY KEY, ZTITLE TEXT)`);
-  db.run(`CREATE TABLE Z_5TAGS (Z_5NOTES INTEGER, Z_13TAGS INTEGER)`);
-};
+import { createBearTables, CORE_DATA_2021, READABLE_2021 } from "./bear-fixture";
 
 const buildFixture = (): Database => {
   const db = new Database(":memory:");
