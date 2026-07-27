@@ -11,9 +11,28 @@ bun run start
 # Type check
 bun run typecheck
 
+# Unit tests (in-memory fixture, no Bear needed)
+bun test
+
+# End-to-end against the real Bear app (macOS + Bear required)
+bun run e2e
+
 # Build
 bun run build
 ```
+
+## Testing
+
+`bun test` runs against an in-memory SQLite fixture and a stubbed URL runner,
+so a green suite proves the code agrees with the fixture - not that it agrees
+with Bear. Bear ignores a bad `bear://` request silently, and `open` exits 0
+either way, so a broken write path looks identical to a working one from here.
+
+**After any change to the read queries, the write path, the tool surface, or
+the note/URL rendering, run `bun run e2e` before merging** and say in the PR
+what it covered. See [docs/TEST-PROTOCOL.md](docs/TEST-PROTOCOL.md) for what
+the run asserts, what it cannot prove, and how to extend it. It writes to the
+real Bear library and cleans up after itself.
 
 ## Architecture
 
