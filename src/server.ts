@@ -14,10 +14,10 @@ import {
   getAllTags,
   trashNote,
   archiveNote,
-  unarchiveNote,
   listArchivedNotes,
   renameTag,
   deleteTag,
+  MAX_LIMIT,
 } from "./bear.js";
 
 const server = new McpServer({
@@ -43,6 +43,26 @@ const defineTool = <Schema extends z.ZodObject<any>>(definition: {
   handler: (args: z.infer<Schema>) => Promise<string | object> | string | object;
 }): ToolDefinition => definition;
 
+// A blank title would render as a bare "# " H1, and under mode=replace_all
+// that empty heading overwrites the note's real title. Rejected at the
+// boundary rather than repaired further in.
+const noteTitle = z.string().trim().min(1, "Note title must not be empty");
+
+// Pagination, shared by every list-shaped tool. Defaults live in bear.ts so
+// omitting them keeps each tool's own historical page size.
+const paginationSchema = {
+  limit: z.number().int().min(1).max(MAX_LIMIT).optional()
+    .describe(`Maximum notes to return (max ${MAX_LIMIT})`),
+  offset: z.number().int().min(0).optional()
+    .describe("Number of matching notes to skip, for paging past the first page"),
+};
+
+// Bear's URL scheme is fire-and-forget: `open` returns as soon as macOS finds
+// a handler for bear://, and Bear reports nothing back. A write tool can only
+// honestly state what it sent, never that the change landed.
+const sentToBear = (what: string): string =>
+  `Sent to Bear: ${what}. Bear does not report back, so this is not confirmation that it was applied.`;
+
 // Every Bear tool, described as data. Adding a tool is adding a row; the
 // try/catch and result shaping below are written once for all of them.
 const tools: ToolDefinition[] = [
@@ -50,27 +70,28 @@ const tools: ToolDefinition[] = [
     name: "bear_create_note",
     description: "Create a new note in Bear",
     inputSchema: z.object({
-      title: z.string().describe("Note title"),
+      title: noteTitle.describe("Note title"),
       text: z.string().describe("Note content (Markdown)"),
-      tags: z.array(z.string()).optional().describe("Tags to add to the note")
+      tags: z.array(z.string()).optional().describe("Tags to add to the note (a leading # is optional)")
     }),
     handler: async ({ title, text, tags }) => {
       await createNote(title, text, tags);
-      return `Created note: ${title}`;
+      return sentToBear(`create note "${title}"`);
     }
   }),
   defineTool({
     name: "bear_search",
-    description: "Search for notes in Bear by text or tag",
+    description: "Search for notes in Bear by text or tag. Matching is case-insensitive, including for non-ASCII characters, and the term matches literally (no wildcards). Returns one page of notes: `count` is the size of that page, and `hasMore` says whether further notes matched.",
     inputSchema: z.object({
-      term: z.string().optional().describe("Search term (free text)"),
-      tag: z.string().optional().describe("Filter by tag (without #)")
+      term: z.string().optional().describe("Search term (free text). Blank means no text filter."),
+      tag: z.string().optional().describe("Filter by tag (a leading # is optional). Blank means no tag filter."),
+      ...paginationSchema,
     }),
-    handler: ({ term, tag }) => searchNotes(term, tag)
+    handler: ({ term, tag, limit, offset }) => searchNotes({ term, tag, limit, offset })
   }),
   defineTool({
     name: "bear_get_note",
-    description: "Get the full content of a specific note",
+    description: "Get the full content of a specific note. Works for trashed and archived notes too; the isTrashed and isArchived fields say which.",
     inputSchema: z.object({
       noteId: z.string().describe("Note ID (from search results)")
     }),
@@ -89,7 +110,7 @@ const tools: ToolDefinition[] = [
     }),
     handler: async ({ noteId, text }) => {
       await appendToNote(noteId, text);
-      return `Appended text to note: ${noteId}`;
+      return sentToBear(`append text to note ${noteId}`);
     }
   }),
   defineTool({
@@ -101,7 +122,7 @@ const tools: ToolDefinition[] = [
     }),
     handler: async ({ noteId, text }) => {
       await prependToNote(noteId, text);
-      return `Prepended text to note: ${noteId}`;
+      return sentToBear(`prepend text to note ${noteId}`);
     }
   }),
   defineTool({
@@ -109,13 +130,13 @@ const tools: ToolDefinition[] = [
     description: "Replace the entire content of an existing note. Always structures the note as: title (H1) first, then tags, then content.",
     inputSchema: z.object({
       noteId: z.string().describe("Note ID (from search results)"),
-      title: z.string().describe("Note title (becomes the H1 heading on the first line)"),
+      title: noteTitle.describe("Note title (becomes the H1 heading on the first line)"),
       text: z.string().describe("New content (Markdown), placed after title and tags"),
-      tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content)")
+      tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content; a leading # is optional)")
     }),
     handler: async ({ noteId, title, text, tags }) => {
       await replaceNoteContent(noteId, title, text, tags);
-      return `Replaced content of note: ${noteId}`;
+      return sentToBear(`replace the content of note ${noteId}`);
     }
   }),
   defineTool({
@@ -126,14 +147,12 @@ const tools: ToolDefinition[] = [
   }),
   defineTool({
     name: "bear_list_by_tag",
-    description: "List all notes with a specific tag",
+    description: "List notes with a specific tag. Returns one page: `count` is the size of that page, and `hasMore` says whether further notes carry the tag.",
     inputSchema: z.object({
-      tag: z.string().describe("Tag to filter by (without #)")
+      tag: z.string().trim().min(1, "Tag must not be blank").describe("Tag to filter by (a leading # is optional)"),
+      ...paginationSchema,
     }),
-    handler: ({ tag }) => {
-      const notes = listNotesByTag(tag);
-      return { tag, count: notes.length, notes };
-    }
+    handler: ({ tag, limit, offset }) => ({ tag, ...listNotesByTag(tag, { limit, offset }) })
   }),
   defineTool({
     name: "bear_rename_tag",
@@ -144,7 +163,7 @@ const tools: ToolDefinition[] = [
     }),
     handler: async ({ name, newName }) => {
       await renameTag(name, newName);
-      return `Renamed tag '${name}' to '${newName}'`;
+      return sentToBear(`rename tag '${name}' to '${newName}'`);
     }
   }),
   defineTool({
@@ -155,7 +174,7 @@ const tools: ToolDefinition[] = [
     }),
     handler: async ({ name }) => {
       await deleteTag(name);
-      return `Deleted tag: ${name}`;
+      return sentToBear(`delete tag '${name}'`);
     }
   }),
   defineTool({
@@ -166,39 +185,25 @@ const tools: ToolDefinition[] = [
     }),
     handler: async ({ noteId }) => {
       await trashNote(noteId);
-      return `Moved note to trash: ${noteId}`;
+      return sentToBear(`move note ${noteId} to trash`);
     }
   }),
   defineTool({
     name: "bear_archive_note",
-    description: "Archive a note (moves it out of main view but keeps it accessible)",
+    description: "Archive a note (moves it out of main view but keeps it accessible). Bear's URL scheme has no un-archive action, so this cannot be undone from here - only in Bear itself.",
     inputSchema: z.object({
       noteId: z.string().describe("Note ID")
     }),
     handler: async ({ noteId }) => {
       await archiveNote(noteId);
-      return `Archived note: ${noteId}`;
-    }
-  }),
-  defineTool({
-    name: "bear_unarchive_note",
-    description: "Restore an archived note back to the main view",
-    inputSchema: z.object({
-      noteId: z.string().describe("Note ID")
-    }),
-    handler: async ({ noteId }) => {
-      await unarchiveNote(noteId);
-      return `Unarchived note: ${noteId}`;
+      return sentToBear(`archive note ${noteId}`);
     }
   }),
   defineTool({
     name: "bear_list_archived",
-    description: "List all archived notes",
-    inputSchema: z.object({}),
-    handler: () => {
-      const notes = listArchivedNotes();
-      return { count: notes.length, notes };
-    }
+    description: "List archived notes. Returns one page: `count` is the size of that page, and `hasMore` says whether more archived notes exist.",
+    inputSchema: z.object({ ...paginationSchema }),
+    handler: ({ limit, offset }) => listArchivedNotes({ limit, offset })
   })
 ];
 
@@ -216,14 +221,24 @@ for (const tool of tools) {
   );
 }
 
-// Cleanup on exit
-process.on("SIGINT", () => {
+// One cleanup for every shutdown path. closeDatabase() nulls its handle, so
+// calling it more than once is safe.
+const shutdown = (): void => {
   closeDatabase();
+};
+
+// The path that actually happens: Claude Code shuts a stdio server down by
+// closing its stdin, which ends the transport without delivering a signal.
+// No process.exit here, so a normal shutdown can drain.
+server.server.onclose = shutdown;
+
+process.on("SIGINT", () => {
+  shutdown();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  closeDatabase();
+  shutdown();
   process.exit(0);
 });
 
