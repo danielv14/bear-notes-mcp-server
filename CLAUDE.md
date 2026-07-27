@@ -14,9 +14,6 @@ bun run typecheck
 # Unit tests (in-memory fixture, no Bear needed)
 bun test
 
-# End-to-end against the real Bear app (macOS + Bear required)
-bun run e2e
-
 # Build
 bun run build
 ```
@@ -28,11 +25,22 @@ so a green suite proves the code agrees with the fixture - not that it agrees
 with Bear. Bear ignores a bad `bear://` request silently, and `open` exits 0
 either way, so a broken write path looks identical to a working one from here.
 
-**After any change to the read queries, the write path, the tool surface, or
-the note/URL rendering, run `bun run e2e` before merging** and say in the PR
-what it covered. See [docs/TEST-PROTOCOL.md](docs/TEST-PROTOCOL.md) for what
-the run asserts, what it cannot prove, and how to extend it. It writes to the
-real Bear library and cleans up after itself.
+[docs/TEST-PROTOCOL.md](docs/TEST-PROTOCOL.md) closes that gap, and the
+repo-local skill `/bear-protocol` runs it. It is a protocol for a Claude Code
+session to walk through against the real app: create, read, modify, tag, archive
+and trash one real test note through the **connected** `bear` MCP server,
+confirming every write with a raw read-only `sqlite3` query rather than with our
+own read code, plus two checkpoints only the user's eyes can answer.
+
+There is deliberately no scripted end-to-end run. One existed
+(`scripts/e2e-bear.ts`) and was removed: it verified every write by reading the
+note back through `bear_get_note`, which makes our read path the witness for our
+write path, so a shared bug passes. Its checks live in the protocol now. Do not
+reintroduce it.
+
+**After any change to the read queries, the write path, the tool surface, or the
+note/URL rendering, walk the protocol before merging.** Say in the PR that it
+ran, on which Bear and macOS version, and what was skipped.
 
 ## Architecture
 
