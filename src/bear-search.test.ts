@@ -158,4 +158,12 @@ describe("paging", () => {
   test("the browse view keeps its own smaller default page size", () => {
     expect(searchNotes({}, db).limit).toBe(DEFAULT_BROWSE_LIMIT);
   });
+
+  test("a non-numeric limit or offset falls back instead of producing a broken page", () => {
+    const page = searchNotes({ limit: Number.NaN, offset: Number.NaN }, db);
+    expect(page.limit).toBe(DEFAULT_BROWSE_LIMIT);
+    expect(page.offset).toBe(0);
+    expect(page.count).toBe(7);
+    expect(page.hasMore).toBe(false);
+  });
 });

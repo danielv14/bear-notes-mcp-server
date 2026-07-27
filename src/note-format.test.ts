@@ -72,6 +72,18 @@ describe("normalizeTagName", () => {
     expect(normalizeTagName("my tag")).toBe("my tag");
   });
 
+  test("accepts Bear's own multiword form, so a copied tag round-trips", () => {
+    expect(normalizeTagName("#my tag#")).toBe("my tag");
+    expect(normalizeTagName(" #my tag# ")).toBe("my tag");
+    expect(renderNoteMarkdown({ title: "T", text: "b", tags: ["#my tag#"] }))
+      .toBe("# T\n#my tag#\n\nb");
+  });
+
+  test("keeps a trailing # that is part of a single-word name", () => {
+    expect(normalizeTagName("c#")).toBe("c#");
+    expect(normalizeTagName("#f#")).toBe("f#");
+  });
+
   test("returns undefined when nothing usable is left", () => {
     expect(normalizeTagName("")).toBeUndefined();
     expect(normalizeTagName("   ")).toBeUndefined();

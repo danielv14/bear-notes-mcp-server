@@ -48,8 +48,10 @@ export const createBearTables = (db: Database, schema: FixtureSchema = {}): void
   db.run(`CREATE TABLE ZSFNOTETAG (Z_PK INTEGER PRIMARY KEY, ZTITLE TEXT)`);
 
   if (!schema.omitTagJoinTable) {
-    db.run(
-      `CREATE TABLE Z_${noteEntity}TAGS (Z_${noteEntity}NOTES INTEGER, Z_${tagEntity}TAGS INTEGER)`
-    );
+    // Core Data names a many-to-many table after the side with the lower
+    // entity id, so the table is Z_5TAGS today and would be Z_<tag>NOTES if
+    // the numbering were reversed. The columns are named per side either way.
+    const table = noteEntity < tagEntity ? `Z_${noteEntity}TAGS` : `Z_${tagEntity}NOTES`;
+    db.run(`CREATE TABLE ${table} (Z_${noteEntity}NOTES INTEGER, Z_${tagEntity}TAGS INTEGER)`);
   }
 };

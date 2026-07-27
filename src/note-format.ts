@@ -9,15 +9,22 @@ export interface NoteParts {
   tags?: string[];
 }
 
-// Strips Bear's `#` marker and surrounding whitespace from a tag the caller
-// supplied, so "#work", " work " and "work" all mean the same tag. Returns
-// undefined when nothing usable is left ("", "#", "   "), which callers treat
-// as "no tag" rather than as a tag named "".
+// Strips Bear's `#` markers and surrounding whitespace from a tag the caller
+// supplied, so "#work", " work ", "work" and Bear's own multiword form
+// "#my tag#" all name the same tag. Returns undefined when nothing usable is
+// left ("", "#", "   "), which callers treat as "no tag" rather than as a tag
+// named "".
 //
 // Shared by both paths on purpose: the write path renders the result, the read
-// path matches it against ZSFNOTETAG.ZTITLE, which stores tags without the `#`.
+// path matches it against ZSFNOTETAG.ZTITLE, which stores tags without any `#`.
 export const normalizeTagName = (tag: string): string | undefined => {
-  const cleaned = tag.trim().replace(/^#+/, "").trim();
+  const withoutLeading = tag.trim().replace(/^#+/, "").trim();
+  // The closing hash only exists to terminate a multiword tag, so strip it
+  // only when there is whitespace. Otherwise "c#" and "f#" would quietly lose
+  // a character that is part of the name.
+  const cleaned = /\s/.test(withoutLeading)
+    ? withoutLeading.replace(/#+$/, "").trim()
+    : withoutLeading;
   return cleaned || undefined;
 };
 

@@ -72,7 +72,11 @@ export const toNote = (row: NoteRow, tags: string[] = []): Note => {
   return note;
 };
 
-// A note row with no ZUNIQUEIDENTIFIER cannot be used as a handle for any
-// follow-up tool call, so it is dropped from list results rather than handed
-// out as an id of "".
-export const hasUsableId = (row: NoteRow): boolean => row.id != null && row.id !== "";
+// A note with no ZUNIQUEIDENTIFIER cannot be used as a handle for any
+// follow-up tool call, so list queries exclude it rather than hand out an id
+// of "". Filtered in SQL, not after the fact, so a dropped row cannot eat a
+// slot out of the page the caller asked for.
+export const addressableFilter = (alias = ""): string => {
+  const column = prefix(alias);
+  return `${column}ZUNIQUEIDENTIFIER IS NOT NULL AND ${column}ZUNIQUEIDENTIFIER <> ''`;
+};

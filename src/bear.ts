@@ -4,12 +4,12 @@ import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
 import { renderNoteMarkdown, buildBearUrl, normalizeTagName } from "./note-format.js";
 import { tagJoin, joinTagsFromNote } from "./bear-schema.js";
-import { containsFolded, equalsFolded } from "./text-match.js";
+import { containsFolded, equalsFolded, foldForMatch } from "./text-match.js";
 import {
   timestampColumns,
   liveNotesFilter,
+  addressableFilter,
   toNote,
-  hasUsableId,
   type NoteRow,
 } from "./notes-query.js";
 
@@ -107,10 +107,17 @@ export const resetBearUrlRunner = (): void => {
 // the bear:// scheme. A payload that is too long is therefore not an error,
 // it is a silently half-written note -- and under mode=replace_all that means
 // a note overwritten with a partial copy. So the guard has to be here, before
-// sending. 32000 characters sits far below the ~1 MB argv ceiling `open`
-// inherits and far above any ordinary note; raise it if a real note is ever
-// rejected.
-export const MAX_BEAR_URL_LENGTH = 32_000;
+// sending.
+//
+// The one ceiling that can actually be measured is the argv limit `open`
+// inherits: macOS reports ARG_MAX as 1048576 bytes, and execFile was verified
+// to pass a single 1000000-character argument. 500000 leaves half of that for
+// the environment block and still sits roughly 10x above the largest real note
+// observed in a Bear library (33k characters of Markdown, 54k once encoded).
+// It is a backstop against a runaway payload, not a claim about what Bear
+// accepts -- Bear's own limit, if any, is undocumented and unobservable from
+// here.
+export const MAX_BEAR_URL_LENGTH = 500_000;
 
 const callBear = async (action: string, params: Record<string, string>): Promise<void> => {
   const url = buildBearUrl(action, params);
@@ -180,26 +187,44 @@ export const archiveNote = async (noteId: string): Promise<void> => {
 // rather than left reporting a success Bear never delivered; un-archiving is
 // done in Bear's own UI.
 
+// Bear stores tags without the `#`, so a name sent with one matches nothing
+// and the action quietly does nothing -- which, writes being unobservable,
+// still reports as sent. Normalized here for the same reason the read path
+// normalizes: the caller should not have to know Bear's spelling rules.
+const requireTagName = (tag: string, action: string): string => {
+  const name = normalizeTagName(tag);
+  if (!name) {
+    throw new BearError(`Bear action '${action}' needs a tag name, but the value was blank.`);
+  }
+  return name;
+};
+
 export const renameTag = async (name: string, newName: string): Promise<void> => {
-  await callBear("rename-tag", { name, new_name: newName });
+  await callBear("rename-tag", {
+    name: requireTagName(name, "rename-tag"),
+    new_name: requireTagName(newName, "rename-tag"),
+  });
 };
 
 export const deleteTag = async (name: string): Promise<void> => {
-  await callBear("delete-tag", { name });
+  await callBear("delete-tag", { name: requireTagName(name, "delete-tag") });
 };
 
 // ============================================================================
 // READ OPERATIONS (via SQLite - fast)
 // ============================================================================
 
+
 // Keeps the actionable schema-mismatch diagnostics from bear-schema.ts intact
 // instead of burying them under a generic "Failed to search notes".
 const readError = (message: string, error: unknown): DatabaseError =>
   error instanceof DatabaseError ? error : new DatabaseError(message, error);
 
-const clampLimit = (limit: number): number => Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
+const clampLimit = (limit: number, fallback: number): number =>
+  Number.isFinite(limit) ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit))) : fallback;
 
-const clampOffset = (offset: number): number => Math.max(0, Math.trunc(offset));
+const clampOffset = (offset: number): number =>
+  Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
 
 const getNoteTagsBatch = (db: Database, noteIds: string[]): Record<string, string[]> => {
   if (noteIds.length === 0) return {};
@@ -216,10 +241,14 @@ const getNoteTagsBatch = (db: Database, noteIds: string[]): Record<string, strin
     ORDER BY t.ZTITLE
   `;
 
-  const rows = db.prepare(query).all(...noteIds) as { noteId: string; name: string }[];
+  const rows = db.prepare(query).all(...noteIds) as { noteId: string; name: string | null }[];
 
   const result: Record<string, string[]> = {};
   for (const row of rows) {
+    // ZSFNOTETAG.ZTITLE is nullable like every other column here, and Note.tags
+    // is declared string[] -- a NULL would violate it just as silently as a
+    // NULL title did.
+    if (row.name == null) continue;
     if (!result[row.noteId]) result[row.noteId] = [];
     result[row.noteId].push(row.name);
   }
@@ -235,9 +264,10 @@ const withTags = (db: Database, rows: NoteRow[]): Note[] => {
   return rows.map(row => toNote(row, tagsByNote[row.id as string] ?? []));
 };
 
-// A note row plus the body column, which is read for text matching but never
-// projected into the returned Note -- list results stay title-only.
-type SearchRow = NoteRow & { matchText?: string | null };
+// A note row plus the two columns that exist only to serve the query itself:
+// the body, read for text matching but never projected into the returned Note,
+// and the raw modification date, used when the ordering happens in JS.
+type SearchRow = NoteRow & { matchText?: string | null; sortKey?: number | null };
 
 // Tag names are compared in JS, so a tag lookup starts by resolving the name
 // to primary keys. Bear stores a few hundred tags at most, so reading them all
@@ -256,7 +286,8 @@ interface NoteQuery {
 }
 
 // The one live-notes query both bear_search and bear_list_by_tag run, so the
-// two cannot drift in either the rows they return or the fields on them.
+// two cannot drift in either the rows they return or the fields on them. No
+// ORDER BY and no LIMIT: each caller below appends the ones it can afford.
 // Returns null when the tag exists in neither spelling nor case, which means
 // "no notes" without running a query.
 const buildLiveNotesQuery = (
@@ -268,80 +299,89 @@ const buildLiveNotesQuery = (
     "n.ZUNIQUEIDENTIFIER as id",
     "n.ZTITLE as title",
     timestampColumns("n"),
+    "n.ZMODIFICATIONDATE as sortKey",
   ];
   if (withMatchText) columns.push("n.ZTEXT as matchText");
-  const projection = columns.join(",\n        ");
 
-  if (!tagName) {
-    return {
-      sql: `
-        SELECT
-        ${projection}
-        FROM ZSFNOTE n
-        WHERE ${liveNotesFilter("n")}
-        ORDER BY n.ZMODIFICATIONDATE DESC
-      `,
-      params: [],
-    };
+  const filters = [liveNotesFilter("n"), addressableFilter("n")];
+  const params: (string | number)[] = [];
+
+  if (tagName) {
+    const tagPks = matchingTagPks(db, tagName);
+    if (tagPks.length === 0) return null;
+
+    // A semi-join rather than a JOIN, so no DISTINCT is needed. DISTINCT over
+    // a projection that includes ZTEXT would make SQLite copy every tagged
+    // note's body into a temp b-tree before yielding the first row.
+    const join = tagJoin(db);
+    const placeholders = tagPks.map(() => "?").join(", ");
+    filters.unshift(
+      `n.Z_PK IN (SELECT nt.${join.noteColumn} FROM ${join.table} nt ` +
+        `WHERE nt.${join.tagColumn} IN (${placeholders}))`
+    );
+    params.push(...tagPks);
   }
-
-  const tagPks = matchingTagPks(db, tagName);
-  if (tagPks.length === 0) return null;
-
-  const join = tagJoin(db);
-  const placeholders = tagPks.map(() => "?").join(", ");
 
   return {
     sql: `
-      SELECT DISTINCT
-      ${projection}
+      SELECT
+        ${columns.join(",\n        ")}
       FROM ZSFNOTE n
-      ${joinTagsFromNote(join, "n")}
-      WHERE nt.${join.tagColumn} IN (${placeholders})
-        AND ${liveNotesFilter("n")}
-      ORDER BY n.ZMODIFICATIONDATE DESC
+      WHERE ${filters.join("\n        AND ")}
     `,
-    params: tagPks,
+    params,
   };
 };
 
-const matchesTerm = (row: SearchRow, term?: string): boolean =>
-  !term || containsFolded(row.title ?? "", term) || containsFolded(row.matchText ?? "", term);
+const matchesTerm = (row: SearchRow, term: string): boolean =>
+  containsFolded(row.title ?? "", term) || containsFolded(row.matchText ?? "", term);
 
-// Streams the ordered rows, applies the JS-side text filter, and stops one row
-// past the page. Filtering in JS is what makes non-ASCII case-insensitivity
-// work at all (SQLite's LIKE/LOWER only fold ASCII), so SQLite can no longer
-// apply the LIMIT -- walking the cursor and breaking early keeps that from
-// turning into "load the whole database".
-const collectPage = (
+const toPage = (db: Database, rows: NoteRow[], hasMore: boolean, limit: number, offset: number): NotePage => {
+  const notes = withTags(db, rows);
+  return { notes, count: notes.length, limit, offset, hasMore };
+};
+
+// No text filter: SQLite can order and page the rows itself. One extra row is
+// fetched so hasMore is known without a second query.
+const pageInSql = (db: Database, query: NoteQuery, limit: number, offset: number): NotePage => {
+  const sql = `${query.sql}
+      ORDER BY n.ZMODIFICATIONDATE DESC
+      LIMIT ? OFFSET ?`;
+  const rows = db.prepare(sql).all(...query.params, limit + 1, offset) as SearchRow[];
+  return toPage(db, rows.slice(0, limit), rows.length > limit, limit, offset);
+};
+
+// With a text filter, SQLite cannot do the paging: matching is case-folded in
+// JS (Bun's SQLite only folds ASCII), so the number of matches is unknown
+// until every candidate has been examined.
+//
+// The scan therefore runs with no ORDER BY. That matters: `ORDER BY ... ` with
+// no LIMIT makes SQLite materialize every candidate row -- bodies included --
+// into a temp b-tree before yielding the first one. Streaming instead keeps
+// one body in memory at a time, the match set holds only the projected fields,
+// and the ordering happens over that much smaller set.
+const pageInMemory = (
   db: Database,
   query: NoteQuery,
-  term: string | undefined,
+  term: string,
   limit: number,
   offset: number
-): { rows: SearchRow[]; hasMore: boolean } => {
+): NotePage => {
   const statement = db.prepare(query.sql);
-  const rows: SearchRow[] = [];
-  let matched = 0;
-  let hasMore = false;
+  const matches: SearchRow[] = [];
 
   try {
     for (const row of statement.iterate(...query.params) as IterableIterator<SearchRow>) {
-      if (!hasUsableId(row) || !matchesTerm(row, term)) continue;
-      matched++;
-      if (matched <= offset) continue;
-      if (rows.length < limit) {
-        rows.push(row);
-        continue;
-      }
-      hasMore = true;
-      break;
+      if (!matchesTerm(row, term)) continue;
+      const { matchText, ...withoutBody } = row;
+      matches.push(withoutBody);
     }
   } finally {
     statement.finalize();
   }
 
-  return { rows, hasMore };
+  matches.sort((left, right) => (right.sortKey ?? 0) - (left.sortKey ?? 0));
+  return toPage(db, matches.slice(offset, offset + limit), matches.length > offset + limit, limit, offset);
 };
 
 const emptyPage = (limit: number, offset: number): NotePage => ({
@@ -361,15 +401,18 @@ export const searchNotes = (options: SearchOptions = {}, db: Database = getDatab
     const tagName = options.tag ? normalizeTagName(options.tag) : undefined;
 
     const isBrowse = !term && !tagName;
-    const limit = clampLimit(options.limit ?? (isBrowse ? DEFAULT_BROWSE_LIMIT : DEFAULT_LIMIT));
+    const limit = clampLimit(
+      options.limit ?? (isBrowse ? DEFAULT_BROWSE_LIMIT : DEFAULT_LIMIT),
+      isBrowse ? DEFAULT_BROWSE_LIMIT : DEFAULT_LIMIT
+    );
     const offset = clampOffset(options.offset ?? 0);
 
     const query = buildLiveNotesQuery(db, tagName, term !== undefined);
     if (!query) return emptyPage(limit, offset);
 
-    const { rows, hasMore } = collectPage(db, query, term, limit, offset);
-    const notes = withTags(db, rows);
-    return { notes, count: notes.length, limit, offset, hasMore };
+    return term
+      ? pageInMemory(db, query, term, limit, offset)
+      : pageInSql(db, query, limit, offset);
   } catch (error) {
     throw readError("Failed to search notes", error);
   }
@@ -419,18 +462,33 @@ export const getAllTags = (db: Database = getDatabase()): Tag[] => {
   try {
     const join = tagJoin(db);
     const query = `
-      SELECT
-        t.ZTITLE as name,
-        COUNT(DISTINCT CASE WHEN ${liveNotesFilter("n")} THEN n.Z_PK END) as noteCount
+      SELECT t.ZTITLE as name, n.Z_PK as notePk
       FROM ZSFNOTETAG t
-      LEFT JOIN ${join.table} nt ON t.Z_PK = nt.${join.tagColumn}
-      LEFT JOIN ZSFNOTE n ON nt.${join.noteColumn} = n.Z_PK
-      GROUP BY t.ZTITLE
-      HAVING noteCount > 0
-      ORDER BY t.ZTITLE
+      JOIN ${join.table} nt ON t.Z_PK = nt.${join.tagColumn}
+      JOIN ZSFNOTE n ON nt.${join.noteColumn} = n.Z_PK
+      WHERE ${liveNotesFilter("n")}
     `;
 
-    return db.prepare(query).all() as Tag[];
+    // Grouped in JS rather than with SQL's GROUP BY, which is byte-exact.
+    // "Work" and "work" are one tag as far as bear_list_by_tag is concerned,
+    // so bear_list_tags must not report them as two rows with split counts.
+    // The note primary keys are collected in a Set so a note carrying both
+    // spellings is still counted once.
+    const groups = new Map<string, { name: string; notes: Set<number> }>();
+    for (const row of db.prepare(query).iterate() as IterableIterator<{ name: string | null; notePk: number }>) {
+      if (row.name == null) continue;
+      const key = foldForMatch(row.name);
+      const group = groups.get(key) ?? { name: row.name, notes: new Set<number>() };
+      // Lowest spelling wins as the display name, so the output does not
+      // depend on which row SQLite happened to return first.
+      if (row.name < group.name) group.name = row.name;
+      group.notes.add(row.notePk);
+      groups.set(key, group);
+    }
+
+    return [...groups.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, group]) => ({ name: group.name, noteCount: group.notes.size }));
   } catch (error) {
     throw readError("Failed to get tags", error);
   }
@@ -441,7 +499,7 @@ export const listArchivedNotes = (
   db: Database = getDatabase()
 ): NotePage => {
   try {
-    const limit = clampLimit(options.limit ?? DEFAULT_LIMIT);
+    const limit = clampLimit(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
     const offset = clampOffset(options.offset ?? 0);
 
     // ZARCHIVED = 1 stays strict -- a NULL flag is genuinely not archived --
@@ -449,19 +507,17 @@ export const listArchivedNotes = (
     // in the live views and not here.
     const query = `
       SELECT
-        ZUNIQUEIDENTIFIER as id,
-        ZTITLE as title,
-        ${timestampColumns()},
-        ZARCHIVED as isArchived
-      FROM ZSFNOTE
-      WHERE ZARCHIVED = 1
-        AND ZTRASHED IS NOT 1
-      ORDER BY ZMODIFICATIONDATE DESC
+        n.ZUNIQUEIDENTIFIER as id,
+        n.ZTITLE as title,
+        ${timestampColumns("n")},
+        n.ZARCHIVED as isArchived
+      FROM ZSFNOTE n
+      WHERE n.ZARCHIVED = 1
+        AND n.ZTRASHED IS NOT 1
+        AND ${addressableFilter("n")}
     `;
 
-    const { rows, hasMore } = collectPage(db, { sql: query, params: [] }, undefined, limit, offset);
-    const notes = withTags(db, rows);
-    return { notes, count: notes.length, limit, offset, hasMore };
+    return pageInSql(db, { sql: query, params: [] }, limit, offset);
   } catch (error) {
     throw readError("Failed to list archived notes", error);
   }

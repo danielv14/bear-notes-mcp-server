@@ -81,6 +81,22 @@ describe("write operations build the expected Bear URL", () => {
     await deleteTag("temp");
     expect(captured).toEqual([url("delete-tag", "name=temp&show_window=no")]);
   });
+
+  test("tag actions strip a leading #, which Bear does not store", async () => {
+    await renameTag("#old", "#new");
+    await deleteTag("#temp");
+    expect(captured).toEqual([
+      url("rename-tag", "name=old&new_name=new&show_window=no"),
+      url("delete-tag", "name=temp&show_window=no"),
+    ]);
+  });
+
+  test("a blank tag name is refused instead of sent as an empty parameter", async () => {
+    await expect(deleteTag("  ")).rejects.toThrow(/needs a tag name/);
+    await expect(renameTag("#", "new")).rejects.toThrow(/needs a tag name/);
+    await expect(renameTag("old", "")).rejects.toThrow(/needs a tag name/);
+    expect(captured).toEqual([]);
+  });
 });
 
 describe("write failures", () => {

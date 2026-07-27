@@ -34,6 +34,21 @@ describe("discoverTagJoin", () => {
     });
   });
 
+  test("finds the table under its other Core Data spelling when the tag entity sorts first", () => {
+    // Written out by hand rather than through the fixture's formula: the point
+    // is that discovery does not assume SFNote always has the lower id.
+    const db = new Database(":memory:");
+    db.run(`CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME TEXT, Z_SUPER INTEGER, Z_MAX INTEGER)`);
+    db.run(`INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME, Z_SUPER, Z_MAX) VALUES (15, 'SFNote', 0, 0), (7, 'SFNoteTag', 0, 0)`);
+    db.run(`CREATE TABLE Z_7NOTES (Z_15NOTES INTEGER, Z_7TAGS INTEGER)`);
+
+    expect(discoverTagJoin(db)).toEqual({
+      table: "Z_7NOTES",
+      noteColumn: "Z_15NOTES",
+      tagColumn: "Z_7TAGS",
+    });
+  });
+
   test("names the missing table when the join table is gone", () => {
     const db = new Database(":memory:");
     createBearTables(db, { omitTagJoinTable: true });

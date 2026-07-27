@@ -125,12 +125,15 @@ therefore say what was *sent*, never that it was applied. A failure the server
 an error result. If a write matters, verify it in Bear, or read the note back
 with `bear_get_note`.
 
-**Large notes are refused rather than truncated.** A `bear://` URL longer than
-32000 characters (measured after percent-encoding, which inflates non-ASCII
-text up to 3x) is not sent, and the tool returns an error naming the size.
-Without the guard the write would be silently truncated, which under
-`bear_replace_content` means overwriting a note with a partial copy. Split
-large content across several `bear_append` calls.
+**Runaway payloads are refused rather than truncated.** A `bear://` URL longer
+than 500000 characters (measured after percent-encoding, which inflates
+non-ASCII text up to 3x) is not sent, and the tool returns an error naming the
+size. The number comes from the only ceiling that can be measured - the argv
+limit `open` inherits, `ARG_MAX` = 1048576 - and sits roughly 10x above the
+largest note observed in a real Bear library. Bear's own limit, if it has one,
+is undocumented. Without the guard an oversized write would be silently
+truncated, which under `bear_replace_content` means overwriting a note with a
+partial copy. Split very large content across several `bear_append` calls.
 
 **Timestamps are ISO-8601 UTC.** `createdAt` and `modifiedAt` come back as
 `2026-07-27T06:09:00Z`. The trailing `Z` is deliberate: an unmarked
@@ -140,6 +143,12 @@ shifts the date for notes written in the first hours of the day.
 **Search is case-insensitive for all characters, and literal.** `MÖTE` finds
 `möte`, and `50%` finds the literal text `50%` rather than acting as a
 wildcard. Case folding happens in JS because Bun's SQLite only folds ASCII.
+The same applies to tag names, so `bear_list_tags` groups `Work` and `work`
+into one entry rather than reporting two with split counts.
+
+**Tags may be written with or without `#`.** `work`, `#work` and Bear's own
+multiword form `#my tag#` all name the same tag, on both the read and the
+write path.
 
 **List results are paged.** `bear_search`, `bear_list_by_tag` and
 `bear_list_archived` return `{ notes, count, limit, offset, hasMore }`. `count`

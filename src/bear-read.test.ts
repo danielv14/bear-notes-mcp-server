@@ -108,6 +108,51 @@ describe("getAllTags", () => {
   test("counts only live notes per tag", () => {
     expect(getAllTags(db)).toEqual([{ name: "work", noteCount: 1 }]);
   });
+
+  test("groups spellings that differ only by case, matching how tags are looked up", () => {
+    const fixture = new Database(":memory:");
+    createBearTables(fixture);
+    fixture.run(
+      `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
+        (1, 'T-1', 'One', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0),
+        (2, 'T-2', 'Two', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0)`
+    );
+    fixture.run(`INSERT INTO ZSFNOTETAG (Z_PK, ZTITLE) VALUES (10, 'Möte'), (11, 'möte')`);
+    fixture.run(`INSERT INTO Z_5TAGS (Z_5NOTES, Z_13TAGS) VALUES (1, 10), (2, 11)`);
+
+    // bear_list_by_tag treats the two spellings as one tag, so the tag list
+    // must not report them as two with split counts.
+    expect(getAllTags(fixture)).toEqual([{ name: "Möte", noteCount: 2 }]);
+    expect(listNotesByTag("MÖTE", {}, fixture).count).toBe(2);
+  });
+
+  test("counts a note carrying both spellings once", () => {
+    const fixture = new Database(":memory:");
+    createBearTables(fixture);
+    fixture.run(
+      `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
+        (1, 'T-1', 'One', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0)`
+    );
+    fixture.run(`INSERT INTO ZSFNOTETAG (Z_PK, ZTITLE) VALUES (10, 'Work'), (11, 'work')`);
+    fixture.run(`INSERT INTO Z_5TAGS (Z_5NOTES, Z_13TAGS) VALUES (1, 10), (1, 11)`);
+
+    expect(getAllTags(fixture)).toEqual([{ name: "Work", noteCount: 1 }]);
+  });
+
+  test("skips a tag row with a NULL title rather than counting it", () => {
+    const fixture = new Database(":memory:");
+    createBearTables(fixture);
+    fixture.run(
+      `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
+        (1, 'T-1', 'One', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0)`
+    );
+    fixture.run(`INSERT INTO ZSFNOTETAG (Z_PK, ZTITLE) VALUES (10, NULL), (11, 'work')`);
+    fixture.run(`INSERT INTO Z_5TAGS (Z_5NOTES, Z_13TAGS) VALUES (1, 10), (1, 11)`);
+
+    expect(getAllTags(fixture)).toEqual([{ name: "work", noteCount: 1 }]);
+    // Note.tags is string[], so the NULL must not travel out on the note either.
+    expect(searchNotes({}, fixture).notes[0].tags).toEqual(["work"]);
+  });
 });
 
 describe("listArchivedNotes", () => {

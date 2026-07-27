@@ -4,7 +4,7 @@ import {
   timestampColumns,
   liveNotesFilter,
   toNote,
-  hasUsableId,
+  addressableFilter,
 } from "./notes-query";
 
 describe("query fragments", () => {
@@ -66,11 +66,11 @@ describe("toNote", () => {
   });
 });
 
-describe("hasUsableId", () => {
-  test("rejects rows that cannot be used as a handle for a follow-up call", () => {
-    expect(hasUsableId({ id: "N-1" })).toBe(true);
-    expect(hasUsableId({ id: null })).toBe(false);
-    expect(hasUsableId({ id: "" })).toBe(false);
-    expect(hasUsableId({})).toBe(false);
+describe("addressableFilter", () => {
+  test("excludes rows that cannot be used as a handle for a follow-up call", () => {
+    expect(addressableFilter()).toBe("ZUNIQUEIDENTIFIER IS NOT NULL AND ZUNIQUEIDENTIFIER <> ''");
+    expect(addressableFilter("n")).toBe(
+      "n.ZUNIQUEIDENTIFIER IS NOT NULL AND n.ZUNIQUEIDENTIFIER <> ''"
+    );
   });
 });

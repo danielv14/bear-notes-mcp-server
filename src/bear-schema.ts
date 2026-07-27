@@ -27,9 +27,18 @@ const NOTE_ENTITY = "SFNote";
 const TAG_ENTITY = "SFNoteTag";
 
 const entityId = (db: Database, name: string): number => {
-  const row = db
-    .prepare("SELECT Z_ENT as id FROM Z_PRIMARYKEY WHERE Z_NAME = ?")
-    .get(name) as { id: number } | undefined;
+  let row: { id: number } | undefined;
+  try {
+    row = db
+      .prepare("SELECT Z_ENT as id FROM Z_PRIMARYKEY WHERE Z_NAME = ?")
+      .get(name) as { id: number } | undefined;
+  } catch (error) {
+    throw new DatabaseError(
+      "Unsupported Bear database schema: Core Data's Z_PRIMARYKEY table could not be read, " +
+        "so the note/tag entity ids cannot be resolved. Is this actually a Bear database?",
+      error
+    );
+  }
 
   if (!row) {
     throw new DatabaseError(
@@ -50,31 +59,40 @@ export const discoverTagJoin = (db: Database): TagJoin => {
   const noteEntity = entityId(db, NOTE_ENTITY);
   const tagEntity = entityId(db, TAG_ENTITY);
 
-  const join: TagJoin = {
-    table: `Z_${noteEntity}TAGS`,
-    noteColumn: `Z_${noteEntity}NOTES`,
-    tagColumn: `Z_${tagEntity}TAGS`,
-  };
+  const noteColumn = `Z_${noteEntity}NOTES`;
+  const tagColumn = `Z_${tagEntity}TAGS`;
 
-  const columns = tableColumns(db, join.table);
-  if (columns.length === 0) {
-    throw new DatabaseError(
-      `Unsupported Bear database schema: expected the note/tag join table '${join.table}' ` +
-        `(derived from Core Data entity ids ${NOTE_ENTITY}=${noteEntity}, ${TAG_ENTITY}=${tagEntity}), ` +
-        "but no such table exists. Bear's schema has probably changed."
-    );
+  // Core Data names a many-to-many table after whichever side has the lower
+  // entity id, plus that side's relationship name. Today SFNote (5) is below
+  // SFNoteTag (13), which is the only reason the table reads Z_5TAGS; a
+  // renumbering that swapped the order would produce Z_<tag>NOTES instead.
+  // Both spellings are tried so the ordering is not silently assumed. The
+  // column names do not depend on the ordering.
+  const candidates =
+    noteEntity < tagEntity
+      ? [`Z_${noteEntity}TAGS`, `Z_${tagEntity}NOTES`]
+      : [`Z_${tagEntity}NOTES`, `Z_${noteEntity}TAGS`];
+
+  const rejected: string[] = [];
+  for (const table of candidates) {
+    const columns = tableColumns(db, table);
+    if (columns.length === 0) {
+      rejected.push(`${table} (no such table)`);
+      continue;
+    }
+    const missing = [noteColumn, tagColumn].filter(column => !columns.includes(column));
+    if (missing.length > 0) {
+      rejected.push(`${table} (missing ${missing.join(", ")}; found ${columns.join(", ")})`);
+      continue;
+    }
+    return { table, noteColumn, tagColumn };
   }
 
-  const missing = [join.noteColumn, join.tagColumn].filter(column => !columns.includes(column));
-  if (missing.length > 0) {
-    throw new DatabaseError(
-      `Unsupported Bear database schema: table '${join.table}' is missing the expected ` +
-        `column(s) ${missing.join(", ")}. Found: ${columns.join(", ")}. ` +
-        "Bear's schema has probably changed."
-    );
-  }
-
-  return join;
+  throw new DatabaseError(
+    "Unsupported Bear database schema: no usable note/tag join table. Derived from Core Data " +
+      `entity ids ${NOTE_ENTITY}=${noteEntity}, ${TAG_ENTITY}=${tagEntity} and tried ` +
+      `${rejected.join("; ")}. Bear's schema has probably changed.`
+  );
 };
 
 // Discovery reads the same tables on every call, so cache it per Database
