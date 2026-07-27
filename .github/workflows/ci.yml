@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # ubuntu, not macos: the unit suite runs against an in-memory SQLite fixture
+    # and a stubbed URL runner, so nothing here needs macOS or Bear. What does
+    # need them cannot run in CI at all - see docs/TEST-PROTOCOL.md.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - run: bun test
+
+      - run: bun run build

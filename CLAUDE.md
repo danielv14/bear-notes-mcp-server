@@ -42,6 +42,11 @@ reintroduce it.
 note/URL rendering, walk the protocol before merging.** Say in the PR that it
 ran, on which Bear and macOS version, and what was skipped.
 
+`.github/workflows/ci.yml` runs `typecheck`, `bun test` and `bun run build` on
+Linux for every push to `master` and every pull request. It cannot run the
+protocol: that needs macOS, a Bear install, a real library and a human. Green CI
+therefore means the code is internally consistent, not that Bear accepts it.
+
 ## Architecture
 
 This is an MCP (Model Context Protocol) server that provides Claude Code access to Bear notes on macOS.
