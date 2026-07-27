@@ -1,5 +1,7 @@
 # Bear MCP Server
 
+[![CI](https://github.com/danielv14/bear-notes-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/danielv14/bear-notes-mcp-server/actions/workflows/ci.yml)
+
 An MCP server that integrates Bear notes with Claude Code.
 
 ## Architecture
@@ -161,6 +163,11 @@ matched. Pass `limit` and `offset` to page through the rest.
 bun run typecheck
 bun test   # in-memory SQLite fixture, no Bear needed
 ```
+
+Both run in CI on every push to `master` and every pull request, along with
+`bun run build`. CI runs on Linux, which is fine because nothing in the unit
+suite needs macOS or Bear, and a green run says nothing about whether Bear
+accepts what this server sends it.
 
 `bun test` proves the code agrees with its fixture, not with Bear. For changes to
 the read queries, the write path, the tool surface or the note rendering, also
