@@ -155,6 +155,21 @@ write path.
 is the size of *that page*, never a total; `hasMore` says whether further notes
 matched. Pass `limit` and `offset` to page through the rest.
 
+## Testing
+
+```bash
+bun run typecheck
+bun test   # in-memory SQLite fixture, no Bear needed
+```
+
+`bun test` proves the code agrees with its fixture, not with Bear. For changes to
+the read queries, the write path, the tool surface or the note rendering, also
+walk [docs/TEST-PROTOCOL.md](docs/TEST-PROTOCOL.md), or run it as the repo-local
+skill `/bear-protocol` in Claude Code: it creates, reads, modifies, tags,
+archives and trashes one real test note through the connected MCP server, and
+verifies every write with a raw read-only query against Bear's database rather
+than through this repo's own read path.
+
 ## Logs
 
 Logs are written to stderr, which Claude Code captures automatically. The
