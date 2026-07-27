@@ -26,17 +26,39 @@ This is an MCP (Model Context Protocol) server that provides Claude Code access 
 
 This separation ensures fast reads while using Bear's official API for safe writes.
 
+Bear's URL scheme has no `unarchive` action, so archiving is one-way from here.
+Writes are also fire-and-forget: `open` exits as soon as macOS finds a handler,
+Bear reports nothing back, and tool responses say what was sent rather than
+claiming it was applied.
+
 ### Source Files
 
-- `src/server.ts` - MCP server setup and tool definitions using `@modelcontextprotocol/sdk`
+- `src/server.ts` - MCP server setup and the declarative tool table using `@modelcontextprotocol/sdk`
 - `src/bear.ts` - Core Bear operations (both SQLite reads and URL scheme writes)
 - `src/database.ts` - SQLite connection management with auto-discovery of Bear's database location
+- `src/bear-schema.ts` - Runtime discovery of Core Data's generated entity ids
+- `src/notes-query.ts` - Shared SQL fragments and row-to-Note normalization
+- `src/note-format.ts` - Pure note markdown rendering, tag normalization, URL building
+- `src/text-match.ts` - Unicode-aware case folding used for all matching
 
 ### Bear Database Schema
 
 Key tables for querying notes:
-- `ZSFNOTE` - Notes table (`ZUNIQUEIDENTIFIER`, `ZTITLE`, `ZTEXT`, `ZTRASHED`)
+- `ZSFNOTE` - Notes table (`ZUNIQUEIDENTIFIER`, `ZTITLE`, `ZTEXT`, `ZTRASHED`, `ZARCHIVED`)
 - `ZSFNOTETAG` - Tags table (`ZTITLE`)
 - `Z_5TAGS` - Join table for note-tag relationships (`Z_5NOTES`, `Z_13TAGS`)
+- `Z_PRIMARYKEY` - Core Data's entity registry (`Z_ENT`, `Z_NAME`)
 
-Note: Core Data epoch offset is 978307200 seconds from Unix epoch.
+**`Z_5TAGS` / `Z_5NOTES` / `Z_13TAGS` are not stable names.** The 5 and 13 are
+Core Data's generated entity ids for `SFNote` and `SFNoteTag`; adding or
+removing an entity in a future Bear release renumbers them. Do not hardcode
+them - `src/bear-schema.ts` looks them up in `Z_PRIMARYKEY` and validates the
+result, so a schema change produces an actionable error instead of "no such
+table: Z_5TAGS" surfacing as a generic read failure.
+
+Notes:
+- Core Data epoch offset is 978307200 seconds from Unix epoch.
+- `ZTRASHED` / `ZARCHIVED` can be NULL, so predicates use `IS NOT 1` rather
+  than `= 0` (`NULL = 0` is NULL, which would silently hide the note).
+- Bun's SQLite has no ICU, so `LIKE`, `LOWER()` and `UPPER()` only fold ASCII.
+  All case-insensitive matching happens in JS (`src/text-match.ts`).
