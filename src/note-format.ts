@@ -9,14 +9,47 @@ export interface NoteParts {
   tags?: string[];
 }
 
+// Strips Bear's `#` marker and surrounding whitespace from a tag the caller
+// supplied, so "#work", " work " and "work" all mean the same tag. Returns
+// undefined when nothing usable is left ("", "#", "   "), which callers treat
+// as "no tag" rather than as a tag named "".
+//
+// Shared by both paths on purpose: the write path renders the result, the read
+// path matches it against ZSFNOTETAG.ZTITLE, which stores tags without the `#`.
+export const normalizeTagName = (tag: string): string | undefined => {
+  const cleaned = tag.trim().replace(/^#+/, "").trim();
+  return cleaned || undefined;
+};
+
+// Renders one tag in Bear's syntax. A tag containing whitespace needs a
+// closing hash (`#my tag#`) or Bear terminates it at the first space and
+// leaves the rest sitting in the note body as plain text. Nested tags use `/`
+// and are left alone. A tag that normalizes to nothing is dropped.
+const renderTag = (tag: string): string | undefined => {
+  const name = normalizeTagName(tag);
+  if (!name) return undefined;
+  return /\s/.test(name) ? `#${name}#` : `#${name}`;
+};
+
 const renderTags = (tags?: string[]): string =>
-  tags?.length ? tags.map(tag => `#${tag}`).join(" ") : "";
+  (tags ?? [])
+    .map(renderTag)
+    .filter((tag): tag is string => tag !== undefined)
+    .join(" ");
 
 // The single rule for structuring a note as Markdown: H1 title on the first
 // line, tags on the next line, then a blank line, then the content. Putting
 // the title first prevents Bear from reading a leading #tag as the title
 // (regression fixed in 3e3842e, now used by both create and replace).
+//
+// A blank title is rejected rather than rendered as a bare "# " heading: with
+// mode=replace_all that empty heading would overwrite the note's real title.
+// The tool schemas reject it at the boundary; this is the backstop for any
+// other caller, and keeps the H1-first guarantee unconditional.
 export const renderNoteMarkdown = ({ title, text, tags }: NoteParts): string => {
+  if (!title.trim()) {
+    throw new Error("Note title must not be empty");
+  }
   const lines = [`# ${title}`];
   const renderedTags = renderTags(tags);
   if (renderedTags) lines.push(renderedTags);
@@ -24,7 +57,8 @@ export const renderNoteMarkdown = ({ title, text, tags }: NoteParts): string => 
 };
 
 // Builds the full bear://x-callback-url. show_window=no is always set so Bear
-// does not steal focus when a write runs (8f7ddf0 / 8424d82).
+// does not steal focus when a write runs (8f7ddf0 / 8424d82); it is an
+// optional parameter on every action this server sends.
 export const buildBearUrl = (action: string, params: Record<string, string>): string => {
   const allParams = { ...params, show_window: "no" };
   const query = Object.entries(allParams)
