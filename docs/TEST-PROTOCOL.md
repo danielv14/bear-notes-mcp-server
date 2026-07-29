@@ -66,13 +66,17 @@ Do not skip this. A stale MCP connection makes the whole run meaningless.
    during this session, or the session started before the change landed, the
    connected server is stale.
    - Compare your `mcp__bear__*` tool list against the tool table in
-     `src/tools.ts`: same names, same count. That is also the tool-surface
-     check, so record it as S1: 13 tools registered, matching the table.
+     `src/tools.ts`: same names, same count. The table is the authority, not
+     a number written here -- count the `defineTool` rows when you walk this.
+     Record it as S1: every tool in the table is in your list, and nothing
+     more.
    - S2: `bear_unarchive_note` must not be there. It was removed, and Bear's URL
      scheme has no `unarchive` action. If it is still in your tool list, the
      connection is stale. Reconnect the `bear` server (`/mcp`) or start a fresh
      session, then start this protocol over.
-   - S3: `bear_search` advertises exactly `term`, `tag`, `limit` and `offset`.
+   - S3: `bear_search` advertises exactly the parameters its `inputSchema` in
+     the table declares. Check against the table, not against a remembered
+     list: a mismatch in either direction means a stale connection.
 3. **Bear must be running.** `pgrep -x Bear`. Ask the user to open it if not; a
    cold launch triggered by the first `bear://` URL adds a lot of delay and
    makes the first poll look like a failed write.
@@ -110,6 +114,9 @@ Core Data's generated entity ids, so derive them instead of hardcoding `Z_5TAGS`
 and `Z_13TAGS`:
 
 ```bash
+# These two paths are a snapshot of DB_PATHS in src/database.ts, which is the
+# authority on where Bear's store lives and in which order to try. If neither
+# exists, re-check that file before concluding anything.
 DB="$HOME/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
 # Fall back to this path if the first does not exist (Bear without iCloud):
 # DB="$HOME/Library/Containers/net.shinyfrog.bear/Data/Documents/Application Data/database.sqlite"

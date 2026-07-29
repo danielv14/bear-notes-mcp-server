@@ -1,5 +1,27 @@
 import { test, expect, describe } from "bun:test";
-import { renderNoteMarkdown, buildBearUrl, normalizeTagName } from "./note-format";
+import { renderNoteMarkdown, buildBearUrl, normalizeTagName, tagKey, sameTag } from "./note-format";
+
+// The one place the tag-identity rule itself is pinned. The cross-path
+// consistency it guarantees (searchNotes vs listNotesByTag vs getAllTags) is
+// asserted in bear-read.test.ts and bear-search.test.ts.
+describe("tag identity", () => {
+  test("spellings that differ only in case are one tag", () => {
+    expect(sameTag("Work", "work")).toBe(true);
+    expect(tagKey("Work")).toBe(tagKey("wORK"));
+  });
+
+  test("case-folding is unicode-aware, not ASCII-only", () => {
+    expect(sameTag("MÖTE", "möte")).toBe(true);
+  });
+
+  test("a precomposed ö and an o plus combining diaeresis are one tag", () => {
+    expect(sameTag("möte", "möte")).toBe(true);
+  });
+
+  test("different names are different tags", () => {
+    expect(sameTag("work", "worked")).toBe(false);
+  });
+});
 
 describe("renderNoteMarkdown", () => {
   test("title becomes an H1 on the first line", () => {

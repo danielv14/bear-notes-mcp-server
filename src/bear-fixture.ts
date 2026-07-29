@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
+import { CORE_DATA_EPOCH_OFFSET } from "./notes-query";
 
 // Test-only helpers for building an in-memory stand-in for Bear's database.
 // Imported by the read/search tests; not part of the server bundle.
 
 // 2021-01-01 00:00:00 UTC expressed as a Core Data timestamp (unix 1609459200
-// minus the epoch offset). Reading it back through the queries yields the
-// ISO-8601 string below.
-export const CORE_DATA_2021 = 1609459200 - 978307200;
+// minus the epoch offset, imported so the fixture cannot drift from the
+// conversion the queries apply). Reading it back through the queries yields
+// the ISO-8601 string below.
+export const CORE_DATA_2021 = 1609459200 - CORE_DATA_EPOCH_OFFSET;
 export const READABLE_2021 = "2021-01-01T00:00:00Z";
 
 // Core Data's generated entity ids for Bear's note and tag entities, which is

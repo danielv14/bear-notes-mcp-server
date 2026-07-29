@@ -2,9 +2,9 @@ import type { Database } from "bun:sqlite";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
-import { renderNoteMarkdown, buildBearUrl, normalizeTagName } from "./note-format.js";
+import { renderNoteMarkdown, buildBearUrl, normalizeTagName, tagKey, sameTag } from "./note-format.js";
 import { tagJoin, joinTagsFromNote } from "./bear-schema.js";
-import { containsFolded, equalsFolded, foldForMatch } from "./text-match.js";
+import { containsFolded } from "./text-match.js";
 import {
   timestampColumns,
   liveNotesFilter,
@@ -258,10 +258,24 @@ const getNoteTagsBatch = (db: Database, noteIds: string[]): Record<string, strin
 const getNoteTags = (db: Database, noteId: string): string[] =>
   getNoteTagsBatch(db, [noteId])[noteId] ?? [];
 
+// Every query routed through withTags must include addressableFilter, which
+// is what guarantees a non-null, non-empty id. Verified rather than cast, so
+// a new query that forgets the filter fails loudly here instead of silently
+// mis-keying its tags.
+const addressableId = (row: NoteRow): string => {
+  if (!row.id) {
+    throw new DatabaseError(
+      "Query bug: a row without a usable ZUNIQUEIDENTIFIER reached withTags. " +
+        "The query that produced it is missing addressableFilter."
+    );
+  }
+  return row.id;
+};
+
 // Attaches batched tags to a set of rows and normalizes them to Notes.
 const withTags = (db: Database, rows: NoteRow[]): Note[] => {
-  const tagsByNote = getNoteTagsBatch(db, rows.map(row => row.id as string));
-  return rows.map(row => toNote(row, tagsByNote[row.id as string] ?? []));
+  const tagsByNote = getNoteTagsBatch(db, rows.map(addressableId));
+  return rows.map(row => toNote(row, tagsByNote[addressableId(row)] ?? []));
 };
 
 // A note row plus the two columns that exist only to serve the query itself:
@@ -277,7 +291,7 @@ const matchingTagPks = (db: Database, tagName: string): number[] => {
     .prepare("SELECT Z_PK as pk, ZTITLE as name FROM ZSFNOTETAG")
     .all() as { pk: number; name: string | null }[];
 
-  return rows.filter(row => row.name != null && equalsFolded(row.name, tagName)).map(row => row.pk);
+  return rows.filter(row => row.name != null && sameTag(row.name, tagName)).map(row => row.pk);
 };
 
 interface NoteQuery {
@@ -477,7 +491,7 @@ export const getAllTags = (db: Database = getDatabase()): Tag[] => {
     const groups = new Map<string, { name: string; notes: Set<number> }>();
     for (const row of db.prepare(query).iterate() as IterableIterator<{ name: string | null; notePk: number }>) {
       if (row.name == null) continue;
-      const key = foldForMatch(row.name);
+      const key = tagKey(row.name);
       const group = groups.get(key) ?? { name: row.name, notes: new Set<number>() };
       // Lowest spelling wins as the display name, so the output does not
       // depend on which row SQLite happened to return first.

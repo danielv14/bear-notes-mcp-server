@@ -1,7 +1,9 @@
-// Pure note-formatting logic. No side effects: parts in, strings out.
-// This is the test surface for how a Bear note is structured and how a
-// bear://x-callback-url is built. Execution lives behind the runner seam
-// in bear.ts.
+// Pure note-formatting and tag-spelling logic. No side effects: parts in,
+// strings out. This is the test surface for how a Bear note is structured,
+// how a bear://x-callback-url is built, and what makes two tag spellings the
+// same tag. Execution lives behind the runner seam in bear.ts.
+
+import { equalsFolded, foldForMatch } from "./text-match.js";
 
 export interface NoteParts {
   title: string;
@@ -27,6 +29,16 @@ export const normalizeTagName = (tag: string): string | undefined => {
     : withoutLeading;
   return cleaned || undefined;
 };
+
+// The identity rule for tags, named in one place: Bear stores whatever
+// spelling the user typed ("Work", "work", precomposed or combining "ö"),
+// but bear_list_by_tag and bear_list_tags treat spellings that case-fold to
+// the same string as one tag. tagKey is the grouping form of the rule,
+// sameTag the pairwise form. Identity is about *stored* names; caller input
+// goes through normalizeTagName first, which handles spelling (`#`, blanks).
+export const tagKey = (name: string): string => foldForMatch(name);
+
+export const sameTag = (left: string, right: string): boolean => equalsFolded(left, right);
 
 // Renders one tag in Bear's syntax. A tag containing whitespace needs a
 // closing hash (`#my tag#`) or Bear terminates it at the first space and
