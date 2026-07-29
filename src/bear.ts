@@ -258,10 +258,24 @@ const getNoteTagsBatch = (db: Database, noteIds: string[]): Record<string, strin
 const getNoteTags = (db: Database, noteId: string): string[] =>
   getNoteTagsBatch(db, [noteId])[noteId] ?? [];
 
+// Every query routed through withTags must include addressableFilter, which
+// is what guarantees a non-null, non-empty id. Verified rather than cast, so
+// a new query that forgets the filter fails loudly here instead of silently
+// mis-keying its tags.
+const addressableId = (row: NoteRow): string => {
+  if (!row.id) {
+    throw new DatabaseError(
+      "Query bug: a row without a usable ZUNIQUEIDENTIFIER reached withTags. " +
+        "The query that produced it is missing addressableFilter."
+    );
+  }
+  return row.id;
+};
+
 // Attaches batched tags to a set of rows and normalizes them to Notes.
 const withTags = (db: Database, rows: NoteRow[]): Note[] => {
-  const tagsByNote = getNoteTagsBatch(db, rows.map(row => row.id as string));
-  return rows.map(row => toNote(row, tagsByNote[row.id as string] ?? []));
+  const tagsByNote = getNoteTagsBatch(db, rows.map(addressableId));
+  return rows.map(row => toNote(row, tagsByNote[addressableId(row)] ?? []));
 };
 
 // A note row plus the two columns that exist only to serve the query itself:
