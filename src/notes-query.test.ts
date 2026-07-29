@@ -14,8 +14,8 @@ describe("query fragments", () => {
 
   test("timestampColumns converts both timestamps using the offset", () => {
     const sql = timestampColumns();
-    expect(sql).toContain("ZCREATIONDATE + 978307200");
-    expect(sql).toContain("ZMODIFICATIONDATE + 978307200");
+    expect(sql).toContain(`ZCREATIONDATE + ${CORE_DATA_EPOCH_OFFSET}`);
+    expect(sql).toContain(`ZMODIFICATIONDATE + ${CORE_DATA_EPOCH_OFFSET}`);
     expect(sql).toContain("as createdAt");
     expect(sql).toContain("as modifiedAt");
   });
