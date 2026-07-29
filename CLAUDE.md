@@ -65,7 +65,8 @@ claiming it was applied.
 
 ### Source Files
 
-- `src/server.ts` - MCP server setup and the declarative tool table using `@modelcontextprotocol/sdk`
+- `src/server.ts` - Entry point: stdio transport and shutdown wiring (kept as the entry path MCP configs point at)
+- `src/tools.ts` - The declarative tool table, result shaping, and the `createBearServer` factory using `@modelcontextprotocol/sdk`; tests drive it over an in-memory transport
 - `src/bear.ts` - Core Bear operations (both SQLite reads and URL scheme writes)
 - `src/database.ts` - SQLite connection management with auto-discovery of Bear's database location
 - `src/bear-schema.ts` - Runtime discovery of Core Data's generated entity ids
