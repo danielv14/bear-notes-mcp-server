@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { Database } from "bun:sqlite";
 import {
   CORE_DATA_EPOCH_OFFSET,
   timestampColumns,
@@ -7,31 +8,72 @@ import {
   addressableFilter,
 } from "./notes-query";
 
+// The fragments are SQL, so they are tested as SQL: each one runs against an
+// in-memory table and is judged by the rows it keeps or the values it
+// produces, never by its exact spelling -- a semantically identical rewrite
+// must stay green. The composed read functions cover the same rules end to
+// end in bear-read.test.ts; these pin each fragment in isolation.
+const fragmentDb = (): Database => {
+  const db = new Database(":memory:");
+  db.run(`CREATE TABLE ZSFNOTE (
+    ZUNIQUEIDENTIFIER TEXT,
+    ZCREATIONDATE REAL,
+    ZMODIFICATIONDATE REAL,
+    ZTRASHED INTEGER,
+    ZARCHIVED INTEGER
+  )`);
+  return db;
+};
+
+// 2021-01-01T00:00:00Z in Bear's 2001-based epoch. Independently derived
+// (unix 1609459200 minus the 2001 offset), deliberately NOT computed from
+// CORE_DATA_EPOCH_OFFSET: subtracting the export here would cancel the offset
+// out of the assertion and let any value of it pass.
+const RAW_2021 = 631152000;
+
 describe("query fragments", () => {
   test("the Core Data epoch offset is the seconds between 2001 and 1970", () => {
     expect(CORE_DATA_EPOCH_OFFSET).toBe(978307200);
   });
 
-  test("timestampColumns converts both timestamps using the offset", () => {
-    const sql = timestampColumns();
-    expect(sql).toContain(`ZCREATIONDATE + ${CORE_DATA_EPOCH_OFFSET}`);
-    expect(sql).toContain(`ZMODIFICATIONDATE + ${CORE_DATA_EPOCH_OFFSET}`);
-    expect(sql).toContain("as createdAt");
-    expect(sql).toContain("as modifiedAt");
+  test("timestampColumns renders Core Data timestamps as ISO-8601 UTC", () => {
+    const db = fragmentDb();
+    db.run(
+      `INSERT INTO ZSFNOTE (ZUNIQUEIDENTIFIER, ZCREATIONDATE, ZMODIFICATIONDATE) VALUES ('A', ${RAW_2021}, ${RAW_2021})`
+    );
+    const row = db
+      .prepare(`SELECT ${timestampColumns()} FROM ZSFNOTE`)
+      .get() as { createdAt: string; modifiedAt: string };
+    expect(row.createdAt).toBe("2021-01-01T00:00:00Z");
+    expect(row.modifiedAt).toBe("2021-01-01T00:00:00Z");
   });
 
-  test("timestampColumns marks the result as UTC, so it cannot read as local time", () => {
-    expect(timestampColumns()).toContain("%Y-%m-%dT%H:%M:%SZ");
+  test("timestampColumns works against an aliased table", () => {
+    const db = fragmentDb();
+    db.run(
+      `INSERT INTO ZSFNOTE (ZUNIQUEIDENTIFIER, ZCREATIONDATE, ZMODIFICATIONDATE) VALUES ('A', ${RAW_2021}, ${RAW_2021})`
+    );
+    const row = db
+      .prepare(`SELECT ${timestampColumns("n")} FROM ZSFNOTE n`)
+      .get() as { createdAt: string };
+    expect(row.createdAt).toBe("2021-01-01T00:00:00Z");
   });
 
-  test("timestampColumns prefixes columns with the table alias when given", () => {
-    expect(timestampColumns("n")).toContain("n.ZCREATIONDATE");
-    expect(timestampColumns()).not.toContain("n.ZCREATIONDATE");
-  });
+  test("liveNotesFilter keeps live notes and notes with NULL flags, drops trashed and archived", () => {
+    const db = fragmentDb();
+    db.run(`INSERT INTO ZSFNOTE (ZUNIQUEIDENTIFIER, ZTRASHED, ZARCHIVED) VALUES
+      ('live', 0, 0),
+      ('null-flags', NULL, NULL),
+      ('trashed', 1, 0),
+      ('archived', 0, 1)`);
+    const pick = (where: string, from = "ZSFNOTE") =>
+      (db.prepare(`SELECT ZUNIQUEIDENTIFIER as id FROM ${from} WHERE ${where} ORDER BY id`).all() as {
+        id: string;
+      }[]).map(row => row.id);
 
-  test("liveNotesFilter excludes trashed and archived notes, NULL-safely", () => {
-    expect(liveNotesFilter()).toBe("ZTRASHED IS NOT 1 AND ZARCHIVED IS NOT 1");
-    expect(liveNotesFilter("n")).toBe("n.ZTRASHED IS NOT 1 AND n.ZARCHIVED IS NOT 1");
+    // The NULL-flag row staying visible is the point of IS NOT 1 over = 0.
+    expect(pick(liveNotesFilter())).toEqual(["live", "null-flags"]);
+    expect(pick(liveNotesFilter("n"), "ZSFNOTE n")).toEqual(["live", "null-flags"]);
   });
 });
 
@@ -68,9 +110,14 @@ describe("toNote", () => {
 
 describe("addressableFilter", () => {
   test("excludes rows that cannot be used as a handle for a follow-up call", () => {
-    expect(addressableFilter()).toBe("ZUNIQUEIDENTIFIER IS NOT NULL AND ZUNIQUEIDENTIFIER <> ''");
-    expect(addressableFilter("n")).toBe(
-      "n.ZUNIQUEIDENTIFIER IS NOT NULL AND n.ZUNIQUEIDENTIFIER <> ''"
-    );
+    const db = fragmentDb();
+    db.run(`INSERT INTO ZSFNOTE (ZUNIQUEIDENTIFIER) VALUES ('A'), (NULL), ('')`);
+    const pick = (where: string, from = "ZSFNOTE") =>
+      (db.prepare(`SELECT ZUNIQUEIDENTIFIER as id FROM ${from} WHERE ${where}`).all() as {
+        id: string;
+      }[]).map(row => row.id);
+
+    expect(pick(addressableFilter())).toEqual(["A"]);
+    expect(pick(addressableFilter("n"), "ZSFNOTE n")).toEqual(["A"]);
   });
 });
