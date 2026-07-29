@@ -2,9 +2,9 @@ import type { Database } from "bun:sqlite";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDatabase, DatabaseError } from "./database.js";
-import { renderNoteMarkdown, buildBearUrl, normalizeTagName } from "./note-format.js";
+import { renderNoteMarkdown, buildBearUrl, normalizeTagName, tagKey, sameTag } from "./note-format.js";
 import { tagJoin, joinTagsFromNote } from "./bear-schema.js";
-import { containsFolded, equalsFolded, foldForMatch } from "./text-match.js";
+import { containsFolded } from "./text-match.js";
 import {
   timestampColumns,
   liveNotesFilter,
@@ -277,7 +277,7 @@ const matchingTagPks = (db: Database, tagName: string): number[] => {
     .prepare("SELECT Z_PK as pk, ZTITLE as name FROM ZSFNOTETAG")
     .all() as { pk: number; name: string | null }[];
 
-  return rows.filter(row => row.name != null && equalsFolded(row.name, tagName)).map(row => row.pk);
+  return rows.filter(row => row.name != null && sameTag(row.name, tagName)).map(row => row.pk);
 };
 
 interface NoteQuery {
@@ -477,7 +477,7 @@ export const getAllTags = (db: Database = getDatabase()): Tag[] => {
     const groups = new Map<string, { name: string; notes: Set<number> }>();
     for (const row of db.prepare(query).iterate() as IterableIterator<{ name: string | null; notePk: number }>) {
       if (row.name == null) continue;
-      const key = foldForMatch(row.name);
+      const key = tagKey(row.name);
       const group = groups.get(key) ?? { name: row.name, notes: new Set<number>() };
       // Lowest spelling wins as the display name, so the output does not
       // depend on which row SQLite happened to return first.
