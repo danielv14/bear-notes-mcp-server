@@ -66,7 +66,7 @@ Do not skip this. A stale MCP connection makes the whole run meaningless.
    during this session, or the session started before the change landed, the
    connected server is stale.
    - Compare your `mcp__bear__*` tool list against the tool table in
-     `src/server.ts`: same names, same count. That is also the tool-surface
+     `src/tools.ts`: same names, same count. That is also the tool-surface
      check, so record it as S1: 13 tools registered, matching the table.
    - S2: `bear_unarchive_note` must not be there. It was removed, and Bear's URL
      scheme has no `unarchive` action. If it is still in your tool list, the

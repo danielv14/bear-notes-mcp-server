@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeAll, afterAll, afterEach } from "bun:test";
+import { test, expect, describe, beforeAll, afterAll, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -29,6 +29,18 @@ const buildFixture = (): Database => {
 let db: Database;
 let client: Client;
 
+// Bun shares bear.ts module state across test files, so the only thing
+// standing between a test in this file and the real `open -g bear://...`
+// runner is whatever runner happens to be installed. Installed before every
+// test so no call can reach the real Bear library, whatever a schema guard
+// does; tests that need a specific runner install their own on top.
+const refuseWrites = () =>
+  setBearUrlRunner(async () => {
+    throw new Error("no write should reach Bear from this test file");
+  });
+
+beforeEach(refuseWrites);
+
 beforeAll(async () => {
   db = buildFixture();
   const server = createBearServer(() => db);
@@ -39,6 +51,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await client.close();
+  resetBearUrlRunner();
 });
 
 const call = (name: string, args: Record<string, unknown> = {}) =>
@@ -67,6 +80,33 @@ describe("tool registration", () => {
       "bear_search",
       "bear_trash_note",
     ]);
+  });
+
+  test("the database opens on the first read, not at construction and never for writes", async () => {
+    let opens = 0;
+    const countingServer = createBearServer(() => {
+      opens += 1;
+      return db;
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const countingClient = new Client({ name: "lazy-open-test", version: "1.0.0" });
+    await Promise.all([countingClient.connect(clientTransport), countingServer.connect(serverTransport)]);
+
+    try {
+      expect(opens).toBe(0);
+
+      await countingClient.listTools();
+      expect(opens).toBe(0);
+
+      setBearUrlRunner(async () => ({ ok: true }));
+      await countingClient.callTool({ name: "bear_trash_note", arguments: { noteId: "NOTE-A" } });
+      expect(opens).toBe(0);
+
+      await countingClient.callTool({ name: "bear_search", arguments: {} });
+      expect(opens).toBe(1);
+    } finally {
+      await countingClient.close();
+    }
   });
 });
 
@@ -133,10 +173,6 @@ describe("schema validation at the tool surface", () => {
 });
 
 describe("write tools and error wrapping", () => {
-  afterEach(() => {
-    resetBearUrlRunner();
-  });
-
   test("a successful write reports what was sent, not that it was applied", async () => {
     const captured: string[] = [];
     setBearUrlRunner(async (url) => {

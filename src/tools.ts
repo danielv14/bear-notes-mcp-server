@@ -80,7 +80,7 @@ const sentToBear = (what: string): string =>
 // try/catch and result shaping in createBearServer are written once for all
 // of them. getDb stays a thunk so the Bear database is opened on the first
 // read, not at server construction.
-export const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
+const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
   defineTool({
     name: "bear_create_note",
     description: "Create a new note in Bear",
