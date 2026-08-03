@@ -63,6 +63,11 @@ Writes are also fire-and-forget: `open` exits as soon as macOS finds a handler,
 Bear reports nothing back, and tool responses say what was sent rather than
 claiming it was applied.
 
+The API reference is <https://bear.app/faq/x-callback-url-scheme-documentation/>,
+with a per-action parameter builder at `https://bear.app/xurl/<action>/`. The URL
+cited in older issues and comments, `/faq/x-callback-url-scheme-api/`, returns
+404: reach for the one above before concluding the docs are gone.
+
 ### Source Files
 
 - `src/server.ts` - Entry point: stdio transport and shutdown wiring (kept as the entry path MCP configs point at)
