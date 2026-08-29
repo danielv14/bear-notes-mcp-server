@@ -2,16 +2,16 @@
 
 [![CI](https://github.com/danielv14/bear-notes-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/danielv14/bear-notes-mcp-server/actions/workflows/ci.yml)
 
-An MCP server that integrates Bear notes with Claude Code.
+An MCP server that gives Claude Code access to Bear notes on macOS.
 
 ## Architecture
 
-This server uses a hybrid approach for best performance and safety:
+Reads go straight to Bear's SQLite store, writes go through Bear's URL scheme:
 
 | Operation | Method | Why |
 |-----------|--------|-----|
-| Read (search, get, list) | SQLite | Fast, reliable, no UI interaction |
-| Write (create, append, prepend, trash, archive, rename-tag, delete-tag) | URL scheme | Safe, uses Bear's official API |
+| Read (search, get, list) | SQLite | A search is one query, with no round-trip through Bear's UI |
+| Write (create, append, prepend, trash, archive, rename-tag, delete-tag) | URL scheme | Bear owns the database, so writes go through its own API |
 
 Reads and writes have different guarantees, and it is worth knowing which is
 which before trusting a tool response. See [Behaviour notes](#behaviour-notes).
@@ -29,7 +29,7 @@ cd bear-notes-mpc-server
 bun install
 ```
 
-## Claude Code Configuration
+## Claude Code configuration
 
 Add the MCP server using the Claude Code CLI:
 
@@ -56,19 +56,19 @@ claude mcp list
 claude mcp get bear
 ```
 
-## Starting Claude with Bear Integration
+## Starting Claude with Bear
 
-Once the MCP server is configured, simply start a new Claude session:
+Once the MCP server is configured, start a new Claude session:
 
 ```bash
 claude
 ```
 
-Claude will automatically start the Bear MCP server and you'll have access to all Bear tools.
+Claude starts the Bear MCP server itself, and the Bear tools show up in the session.
 
-## Removing the MCP Server
+## Removing the MCP server
 
-The MCP server runs as a subprocess of Claude Code and automatically stops when you exit Claude.
+The MCP server runs as a subprocess of Claude Code and stops when you exit Claude.
 
 To permanently remove the server:
 
@@ -76,7 +76,7 @@ To permanently remove the server:
 claude mcp remove bear
 ```
 
-## Available Tools
+## Available tools
 
 | Tool | Description |
 |------|-------------|
@@ -94,10 +94,10 @@ claude mcp remove bear
 | `bear_archive_note` | Archive a note |
 | `bear_list_archived` | List archived notes (paged) |
 
-There is no un-archive tool: Bear's x-callback-url API has no `unarchive`
-action, so it cannot be done from here. Un-archive in Bear's own UI.
+There is no un-archive tool. Bear's x-callback-url API has no `unarchive`
+action, so this server cannot do it. Un-archive in Bear's own UI.
 
-## Example Usage in Claude
+## Example usage in Claude
 
 Once the server is running, you can ask Claude things like:
 
@@ -109,9 +109,9 @@ Once the server is running, you can ask Claude things like:
 - "Rename my 'old-project' tag to 'archived-project'"
 - "Delete the 'temp' tag from all notes"
 
-## Database Location
+## Database location
 
-The server automatically finds Bear's database in one of these locations:
+The server tries these two locations in order and uses the first that exists:
 
 - **iCloud sync:** `~/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite`
 - **Local storage:** `~/Library/Containers/net.shinyfrog.bear/Data/Documents/Application Data/database.sqlite`
@@ -122,17 +122,17 @@ The server automatically finds Bear's database in one of these locations:
 URL opened with `open -g`, which exits as soon as macOS finds a handler for
 the scheme. Bear reports nothing back, so the server cannot tell an applied
 change from one Bear ignored (an unknown note id, for instance). Write tools
-therefore say what was *sent*, never that it was applied. A failure the server
-*can* see - Bear not installed, or a payload too large to send - is returned as
-an error result. If a write matters, verify it in Bear, or read the note back
+therefore say what was *sent*, never that it was applied. Two failures the
+server does see come back as error results: Bear not installed, and a payload
+too large to send. If a write matters, verify it in Bear, or read the note back
 with `bear_get_note`.
 
-**Runaway payloads are refused rather than truncated.** A `bear://` URL longer
-than 500000 characters (measured after percent-encoding, which inflates
-non-ASCII text up to 3x) is not sent, and the tool returns an error naming the
-size. The number comes from the only ceiling that can be measured - the argv
-limit `open` inherits, `ARG_MAX` = 1048576 - and sits roughly 10x above the
-largest note observed in a real Bear library. Bear's own limit, if it has one,
+**The server refuses runaway payloads rather than truncating them.** It will
+not send a `bear://` URL longer than 500000 characters (measured after
+percent-encoding, which inflates non-ASCII text up to 3x), and the tool returns
+an error naming the size. The number comes from the only ceiling that can be
+measured: the argv limit `open` inherits, `ARG_MAX` = 1048576. It sits roughly
+10x above the largest note observed in a real Bear library. Bear's own limit, if it has one,
 is undocumented. Without the guard an oversized write would be silently
 truncated, which under `bear_replace_content` means overwriting a note with a
 partial copy. Split very large content across several `bear_append` calls.
@@ -179,8 +179,8 @@ than through this repo's own read path.
 
 ## Logs
 
-Logs are written to stderr, which Claude Code captures automatically. The
-server reads no environment variables and has no log-level setting.
+The server writes logs to stderr, and Claude Code captures them. It reads no
+environment variables and has no log-level setting.
 
 ## Permissions
 

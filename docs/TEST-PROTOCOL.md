@@ -67,7 +67,7 @@ Do not skip this. A stale MCP connection makes the whole run meaningless.
    connected server is stale.
    - Compare your `mcp__bear__*` tool list against the tool table in
      `src/tools.ts`: same names, same count. The table is the authority, not
-     a number written here -- count the `defineTool` rows when you walk this.
+     a number written here, so count the `defineTool` rows when you walk this.
      Record it as S1: every tool in the table is in your list, and nothing
      more.
    - S2: `bear_unarchive_note` must not be there. It was removed, and Bear's URL
