@@ -21,7 +21,7 @@ bun run build
 ## Testing
 
 `bun test` runs against an in-memory SQLite fixture and a stubbed URL runner,
-so a green suite proves the code agrees with the fixture - not that it agrees
+so a green suite proves the code agrees with the fixture, not that it agrees
 with Bear. Bear ignores a bad `bear://` request silently, and `open` exits 0
 either way, so a broken write path looks identical to a working one from here.
 
@@ -51,12 +51,14 @@ therefore means the code is internally consistent, not that Bear accepts it.
 
 This is an MCP (Model Context Protocol) server that provides Claude Code access to Bear notes on macOS.
 
-### Hybrid Read/Write Strategy
+### Hybrid read/write strategy
 
 - **Read operations** (search, get, list): Direct SQLite queries against Bear's database (read-only mode)
 - **Write operations** (create, append, prepend, replace, trash, archive, rename-tag, delete-tag): Bear's `bear://x-callback-url` scheme via `open` command
 
-This separation ensures fast reads while using Bear's official API for safe writes.
+A read is a SQLite query, so it never waits on Bear's UI. A write goes through
+Bear's own API, because Bear owns the database and this server opens it
+read-only.
 
 Bear's URL scheme has no `unarchive` action, so archiving is one-way from here.
 Writes are also fire-and-forget: `open` exits as soon as macOS finds a handler,
@@ -68,7 +70,7 @@ with a per-action parameter builder at `https://bear.app/xurl/<action>/`. The UR
 cited in older issues and comments, `/faq/x-callback-url-scheme-api/`, returns
 404: reach for the one above before concluding the docs are gone.
 
-### Source Files
+### Source files
 
 - `src/server.ts` - Entry point: stdio transport and shutdown wiring (kept as the entry path MCP configs point at)
 - `src/tools.ts` - The declarative tool table, result shaping, and the `createBearServer` factory using `@modelcontextprotocol/sdk`; tests drive it over an in-memory transport
@@ -79,7 +81,7 @@ cited in older issues and comments, `/faq/x-callback-url-scheme-api/`, returns
 - `src/note-format.ts` - Pure note markdown rendering, tag normalization, URL building
 - `src/text-match.ts` - Unicode-aware case folding used for all matching
 
-### Bear Database Schema
+### Bear database schema
 
 Key tables for querying notes:
 - `ZSFNOTE` - Notes table (`ZUNIQUEIDENTIFIER`, `ZTITLE`, `ZTEXT`, `ZTRASHED`, `ZARCHIVED`)
@@ -90,7 +92,7 @@ Key tables for querying notes:
 **`Z_5TAGS` / `Z_5NOTES` / `Z_13TAGS` are not stable names.** The 5 and 13 are
 Core Data's generated entity ids for `SFNote` and `SFNoteTag`; adding or
 removing an entity in a future Bear release renumbers them. Do not hardcode
-them - `src/bear-schema.ts` looks them up in `Z_PRIMARYKEY` and validates the
+them. `src/bear-schema.ts` looks them up in `Z_PRIMARYKEY` and validates the
 result, so a schema change produces an actionable error instead of "no such
 table: Z_5TAGS" surfacing as a generic read failure.
 
