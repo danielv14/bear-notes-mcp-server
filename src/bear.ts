@@ -148,35 +148,93 @@ const callBear = async (action: string, params: Record<string, string>): Promise
   }
 };
 
+// Bear's docs say trash and archive fall back to a search when no id is given,
+// and do not say what add-text does with an empty one.
+const requireNoteId = (noteId: string, action: string): string => {
+  const id = noteId.trim();
+  if (!id) {
+    throw new BearError(`Bear action '${action}' needs a note ID, but the value was blank.`);
+  }
+  return id;
+};
+
+// Bear never reports a write back, but the cases where one cannot land are
+// visible in the database beforehand. Bear may still change the note between
+// this read and the send; that race is accepted.
+const requireTargetNote = (
+  db: Database,
+  noteId: string,
+  action: string,
+  refuse: { trashed?: boolean; archived?: boolean }
+): Note => {
+  const id = requireNoteId(noteId, action);
+  const note = getNoteContent(id, db);
+  if (!note) throw new BearError(`Note not found: ${id}`);
+  if (refuse.trashed && note.isTrashed) {
+    throw new BearError(`Note ${id} is in the trash. Restore it in Bear first.`);
+  }
+  if (refuse.archived && note.isArchived) {
+    throw new BearError(`Note ${id} is already archived.`);
+  }
+  return note;
+};
+
+// Bear links a note tagged #work/project to the parent tag `work` too, without
+// `#work` being in the text. Writing the parent back would add it to the note.
+const writtenTags = (tags: string[]): string[] => {
+  const keys = tags.map(tagKey);
+  return tags.filter(tag => !keys.some(key => key.startsWith(`${tagKey(tag)}/`)));
+};
+
+// open_note=no keeps Bear from switching the note the user has on screen.
+// Only create and add-text document it, so it is not in buildBearUrl.
 export const createNote = async (title: string, text: string, tags?: string[]): Promise<void> => {
-  await callBear("create", { text: renderNoteMarkdown({ title, text, tags }) });
+  await callBear("create", { text: renderNoteMarkdown({ title, text, tags }), open_note: "no" });
 };
 
-export const appendToNote = async (noteId: string, text: string): Promise<void> => {
-  await callBear("add-text", { id: noteId, text, mode: "append" });
+const addText = async (db: Database, noteId: string, mode: string, text: (note: Note) => string): Promise<void> => {
+  const note = requireTargetNote(db, noteId, "add-text", { trashed: true });
+  await callBear("add-text", {
+    id: note.id,
+    text: text(note),
+    mode,
+    exclude_trashed: "yes",
+    open_note: "no",
+  });
 };
 
-export const prependToNote = async (noteId: string, text: string): Promise<void> => {
-  await callBear("add-text", { id: noteId, text, mode: "prepend" });
+export const appendToNote = async (noteId: string, text: string, db: Database = getDatabase()): Promise<void> => {
+  await addText(db, noteId, "append", () => text);
+};
+
+export const prependToNote = async (noteId: string, text: string, db: Database = getDatabase()): Promise<void> => {
+  await addText(db, noteId, "prepend", () => text);
 };
 
 // mode=replace_all replaces the whole note including its title (Bear's
 // `replace` is the variant that keeps the title), which is why the title is
-// rendered back into the text as an H1.
-export const replaceNoteContent = async (noteId: string, title: string, text: string, tags?: string[]): Promise<void> => {
-  await callBear("add-text", {
-    id: noteId,
-    text: renderNoteMarkdown({ title, text, tags }),
-    mode: "replace_all",
-  });
+// rendered back into the text as an H1. Tags are text in the note too, so
+// omitted tags means "keep the current ones" and [] clears them.
+export const replaceNoteContent = async (
+  noteId: string,
+  title: string,
+  text: string,
+  tags?: string[],
+  db: Database = getDatabase()
+): Promise<void> => {
+  await addText(db, noteId, "replace_all", note =>
+    renderNoteMarkdown({ title, text, tags: tags ?? writtenTags(note.tags ?? []) })
+  );
 };
 
-export const trashNote = async (noteId: string): Promise<void> => {
-  await callBear("trash", { id: noteId });
+export const trashNote = async (noteId: string, db: Database = getDatabase()): Promise<void> => {
+  const note = requireTargetNote(db, noteId, "trash", { trashed: true });
+  await callBear("trash", { id: note.id });
 };
 
-export const archiveNote = async (noteId: string): Promise<void> => {
-  await callBear("archive", { id: noteId });
+export const archiveNote = async (noteId: string, db: Database = getDatabase()): Promise<void> => {
+  const note = requireTargetNote(db, noteId, "archive", { archived: true });
+  await callBear("archive", { id: note.id });
 };
 
 // There is no unarchive action: Bear's x-callback-url API exposes create,
@@ -280,8 +338,9 @@ const withTags = (db: Database, rows: NoteRow[]): Note[] => {
 
 // A note row plus the two columns that exist only to serve the query itself:
 // the body, read for text matching but never projected into the returned Note,
-// and the raw modification date, used when the ordering happens in JS.
-type SearchRow = NoteRow & { matchText?: string | null; sortKey?: number | null };
+// and the raw modification date plus primary key, used when the ordering
+// happens in JS.
+type SearchRow = NoteRow & { matchText?: string | null; sortKey?: number | null; pk?: number };
 
 // Tag names are compared in JS, so a tag lookup starts by resolving the name
 // to primary keys. Bear stores a few hundred tags at most, so reading them all
@@ -314,6 +373,7 @@ const buildLiveNotesQuery = (
     "n.ZTITLE as title",
     timestampColumns("n"),
     "n.ZMODIFICATIONDATE as sortKey",
+    "n.Z_PK as pk",
   ];
   if (withMatchText) columns.push("n.ZTEXT as matchText");
 
@@ -359,7 +419,7 @@ const toPage = (db: Database, rows: NoteRow[], hasMore: boolean, limit: number, 
 // fetched so hasMore is known without a second query.
 const pageInSql = (db: Database, query: NoteQuery, limit: number, offset: number): NotePage => {
   const sql = `${query.sql}
-      ORDER BY n.ZMODIFICATIONDATE DESC
+      ORDER BY n.ZMODIFICATIONDATE DESC, n.Z_PK DESC
       LIMIT ? OFFSET ?`;
   const rows = db.prepare(sql).all(...query.params, limit + 1, offset) as SearchRow[];
   return toPage(db, rows.slice(0, limit), rows.length > limit, limit, offset);
@@ -394,7 +454,11 @@ const pageInMemory = (
     statement.finalize();
   }
 
-  matches.sort((left, right) => (right.sortKey ?? 0) - (left.sortKey ?? 0));
+  // Same order as pageInSql. Z_PK breaks ties between notes stamped with the
+  // same date, or paging could repeat or skip one.
+  matches.sort((left, right) =>
+    (right.sortKey ?? 0) - (left.sortKey ?? 0) || (right.pk ?? 0) - (left.pk ?? 0)
+  );
   return toPage(db, matches.slice(offset, offset + limit), matches.length > offset + limit, limit, offset);
 };
 

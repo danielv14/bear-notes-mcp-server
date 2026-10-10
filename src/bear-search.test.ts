@@ -167,3 +167,29 @@ describe("paging", () => {
     expect(page.hasMore).toBe(false);
   });
 });
+
+describe("paging over notes with the same modification date", () => {
+  // Inserted out of key order. Without a tiebreaker, SQLite yields tied rows in
+  // whatever order the query plan gives, and offset paging can repeat or skip.
+  const tiedDb = new Database(":memory:");
+  createBearTables(tiedDb);
+  for (const pk of [4, 1, 6, 3, 5, 2]) {
+    tiedDb.run(
+      `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED)
+       VALUES (${pk}, 'T-${pk}', 'tied ${pk}', 'same', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0)`
+    );
+  }
+
+  const pagedIds = (search: (offset: number) => { notes: { id: string }[] }) =>
+    [0, 2, 4].flatMap(offset => search(offset).notes.map(note => note.id));
+
+  const expected = ["T-6", "T-5", "T-4", "T-3", "T-2", "T-1"];
+
+  test("a browse pages through every note once, newest key first", () => {
+    expect(pagedIds(offset => searchNotes({ limit: 2, offset }, tiedDb))).toEqual(expected);
+  });
+
+  test("a term search pages in the same order", () => {
+    expect(pagedIds(offset => searchNotes({ term: "same", limit: 2, offset }, tiedDb))).toEqual(expected);
+  });
+});

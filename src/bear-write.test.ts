@@ -1,4 +1,6 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createBearTables, CORE_DATA_2021 } from "./bear-fixture";
 import {
   setBearUrlRunner,
   resetBearUrlRunner,
@@ -12,6 +14,25 @@ import {
   deleteTag,
   MAX_BEAR_URL_LENGTH,
 } from "./bear";
+
+// LIVE carries `work/project`, which Bear also links to the parent `work`
+// without `#work` being written in the note.
+const buildFixture = (): Database => {
+  const db = new Database(":memory:");
+  createBearTables(db);
+  db.run(
+    `INSERT INTO ZSFNOTE (Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, ZTRASHED, ZARCHIVED) VALUES
+      (1, 'LIVE', 'Live', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 0),
+      (2, 'TRASHED', 'Trashed', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 1, 0),
+      (3, 'ARCHIVED', 'Archived', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, 0, 1),
+      (4, 'UNTAGGED', 'Untagged', 'body', ${CORE_DATA_2021}, ${CORE_DATA_2021}, NULL, NULL)`
+  );
+  db.run(`INSERT INTO ZSFNOTETAG (Z_PK, ZTITLE) VALUES (10, 'work'), (11, 'work/project'), (12, 'my tag'), (13, 'workshop')`);
+  db.run(`INSERT INTO Z_5TAGS (Z_5NOTES, Z_13TAGS) VALUES (1, 10), (1, 11), (1, 12), (1, 13)`);
+  return db;
+};
+
+const db = buildFixture();
 
 let captured: string[] = [];
 
@@ -34,40 +55,40 @@ describe("write operations build the expected Bear URL", () => {
   test("createNote bakes the title as H1, prepends tags, and sends no separate title param", async () => {
     await createNote("My Note", "Body text", ["work", "ideas"]);
     const expectedText = encodeURIComponent("# My Note\n#work #ideas\n\nBody text");
-    expect(captured).toEqual([url("create", `text=${expectedText}&show_window=no`)]);
+    expect(captured).toEqual([url("create", `text=${expectedText}&open_note=no&show_window=no`)]);
     expect(captured[0]).not.toContain("title=");
   });
 
   test("appendToNote uses add-text with mode=append", async () => {
-    await appendToNote("NOTE-ID", "more text");
+    await appendToNote("LIVE", "more text", db);
     expect(captured).toEqual([
-      url("add-text", `id=NOTE-ID&text=${encodeURIComponent("more text")}&mode=append&show_window=no`),
+      url("add-text", `id=LIVE&text=${encodeURIComponent("more text")}&mode=append&exclude_trashed=yes&open_note=no&show_window=no`),
     ]);
   });
 
   test("prependToNote uses add-text with mode=prepend", async () => {
-    await prependToNote("NOTE-ID", "intro text");
+    await prependToNote("LIVE", "intro text", db);
     expect(captured).toEqual([
-      url("add-text", `id=NOTE-ID&text=${encodeURIComponent("intro text")}&mode=prepend&show_window=no`),
+      url("add-text", `id=LIVE&text=${encodeURIComponent("intro text")}&mode=prepend&exclude_trashed=yes&open_note=no&show_window=no`),
     ]);
   });
 
   test("replaceNoteContent uses the same rendering rule as createNote with mode=replace_all", async () => {
-    await replaceNoteContent("NOTE-ID", "Title", "body", ["t"]);
+    await replaceNoteContent("LIVE", "Title", "body", ["t"], db);
     const expectedText = encodeURIComponent("# Title\n#t\n\nbody");
     expect(captured).toEqual([
-      url("add-text", `id=NOTE-ID&text=${expectedText}&mode=replace_all&show_window=no`),
+      url("add-text", `id=LIVE&text=${expectedText}&mode=replace_all&exclude_trashed=yes&open_note=no&show_window=no`),
     ]);
   });
 
-  test("trashNote sends the trash action", async () => {
-    await trashNote("NOTE-ID");
-    expect(captured).toEqual([url("trash", "id=NOTE-ID&show_window=no")]);
+  test("trashNote sends the trash action, without open_note", async () => {
+    await trashNote("LIVE", db);
+    expect(captured).toEqual([url("trash", "id=LIVE&show_window=no")]);
   });
 
-  test("archiveNote sends the archive action", async () => {
-    await archiveNote("NOTE-ID");
-    expect(captured).toEqual([url("archive", "id=NOTE-ID&show_window=no")]);
+  test("archiveNote sends the archive action, without open_note", async () => {
+    await archiveNote("LIVE", db);
+    expect(captured).toEqual([url("archive", "id=LIVE&show_window=no")]);
   });
 
   test("renameTag sends name and new_name, the parameter names Bear documents", async () => {
@@ -96,6 +117,76 @@ describe("write operations build the expected Bear URL", () => {
     await expect(renameTag("#", "new")).rejects.toThrow(/needs a tag name/);
     await expect(renameTag("old", "")).rejects.toThrow(/needs a tag name/);
     expect(captured).toEqual([]);
+  });
+});
+
+describe("replaceNoteContent and the note's tags", () => {
+  const sentText = () => decodeURIComponent(captured[0].match(/text=([^&]*)/)![1]);
+
+  test("omitted tags keep the note's current ones, without writing implied parent tags", async () => {
+    await replaceNoteContent("LIVE", "Title", "body", undefined, db);
+    expect(sentText()).toBe("# Title\n#my tag# #work/project #workshop\n\nbody");
+  });
+
+  test("an empty tags array clears them", async () => {
+    await replaceNoteContent("LIVE", "Title", "body", [], db);
+    expect(sentText()).toBe("# Title\n\nbody");
+  });
+
+  test("an untagged note gets no tag line", async () => {
+    await replaceNoteContent("UNTAGGED", "Title", "body", undefined, db);
+    expect(sentText()).toBe("# Title\n\nbody");
+  });
+});
+
+describe("writes check the target note before sending", () => {
+  const writes: Array<[string, (noteId: string) => Promise<void>]> = [
+    ["append", noteId => appendToNote(noteId, "x", db)],
+    ["prepend", noteId => prependToNote(noteId, "x", db)],
+    ["replace", noteId => replaceNoteContent(noteId, "T", "x", [], db)],
+    ["trash", noteId => trashNote(noteId, db)],
+    ["archive", noteId => archiveNote(noteId, db)],
+  ];
+
+  for (const [name, write] of writes) {
+    test(`${name} refuses an unknown id and sends nothing`, async () => {
+      await expect(write("NOPE")).rejects.toThrow("Note not found: NOPE");
+      expect(captured).toEqual([]);
+    });
+
+    test(`${name} refuses a blank id and sends nothing`, async () => {
+      await expect(write("   ")).rejects.toThrow(/needs a note ID/);
+      expect(captured).toEqual([]);
+    });
+  }
+
+  for (const [name, write] of writes.filter(([name]) => name !== "archive")) {
+    test(`${name} refuses a trashed note`, async () => {
+      await expect(write("TRASHED")).rejects.toThrow("Note TRASHED is in the trash");
+      expect(captured).toEqual([]);
+    });
+  }
+
+  test("archive refuses an archived note", async () => {
+    await expect(archiveNote("ARCHIVED", db)).rejects.toThrow("Note ARCHIVED is already archived");
+    expect(captured).toEqual([]);
+  });
+
+  test("text can still be added to an archived note, and a NULL flag counts as live", async () => {
+    await appendToNote("ARCHIVED", "x", db);
+    await appendToNote("UNTAGGED", "x", db);
+    expect(captured).toHaveLength(2);
+  });
+
+  test("the refusal names the id but not the note's content", async () => {
+    let caught: Error | undefined;
+    try {
+      await trashNote("TRASHED", db);
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught?.message).not.toContain("Trashed");
+    expect(caught?.message).not.toContain("body");
   });
 });
 
@@ -169,10 +260,11 @@ describe("the URL size guard", () => {
     let caught: Error | undefined;
     try {
       await replaceNoteContent(
-        "NOTE-ID",
+        "LIVE",
         "Secret Title",
         bodyOfEncodedLength(MAX_BEAR_URL_LENGTH + 1000, "s"),
-        ["private"]
+        ["private"],
+        db
       );
     } catch (error) {
       caught = error as Error;
