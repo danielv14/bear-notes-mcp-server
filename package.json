@@ -2,6 +2,7 @@
   "name": "bear-mcp-server",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "start": "bun run src/server.ts",
     "build": "bun build src/server.ts --outfile dist/server.js --target bun",
