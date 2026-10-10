@@ -71,7 +71,7 @@ export const renderNoteMarkdown = ({ title, text, tags }: NoteParts): string => 
   if (!title.trim()) {
     throw new Error("Note title must not be empty");
   }
-  if (/[\r\n]/.test(title.trim())) {
+  if (/[\r\n]/.test(title)) {
     throw new Error("Note title must be a single line");
   }
   const lines = [`# ${title}`];

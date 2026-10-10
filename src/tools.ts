@@ -65,7 +65,7 @@ const noteTitle = z.string().trim().min(1, "Note title must not be empty")
 
 const noteIdSchema = z.string().trim().min(1, "Note ID must not be blank");
 
-const tagName = z.string().trim().min(1, "Tag must not be blank");
+const tagNameSchema = z.string().trim().min(1, "Tag must not be blank");
 
 // Pagination, shared by every list-shaped tool. Defaults live in bear.ts so
 // omitting them keeps each tool's own historical page size.
@@ -170,7 +170,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_list_by_tag",
     description: "List notes with a specific tag. Like Bear's sidebar, a parent tag includes notes tagged only with its subtags (`work` includes `work/project`). Returns one page: `count` is the size of that page, and `hasMore` says whether further notes carry the tag.",
     inputSchema: z.object({
-      tag: tagName.describe("Tag to filter by (a leading # is optional)"),
+      tag: tagNameSchema.describe("Tag to filter by (a leading # is optional)"),
       ...paginationSchema,
     }),
     handler: ({ tag, limit, offset }) => ({ tag, ...listNotesByTag(tag, { limit, offset }, getDb()) })
@@ -179,8 +179,8 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_rename_tag",
     description: "Rename an existing tag in Bear",
     inputSchema: z.object({
-      name: tagName.describe("Current tag name (a leading # is optional)"),
-      newName: tagName.describe("New tag name (a leading # is optional)")
+      name: tagNameSchema.describe("Current tag name (a leading # is optional)"),
+      newName: tagNameSchema.describe("New tag name (a leading # is optional)")
     }),
     handler: async ({ name, newName }) => {
       await renameTag(name, newName);
@@ -191,7 +191,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_delete_tag",
     description: "Delete an existing tag from all notes in Bear",
     inputSchema: z.object({
-      name: tagName.describe("Tag name to delete (a leading # is optional)")
+      name: tagNameSchema.describe("Tag name to delete (a leading # is optional)")
     }),
     handler: async ({ name }) => {
       await deleteTag(name);

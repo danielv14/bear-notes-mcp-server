@@ -15,8 +15,6 @@ import {
   MAX_BEAR_URL_LENGTH,
 } from "./bear";
 
-// LIVE carries `work/project`, which Bear also links to the parent `work`
-// without `#work` being written in the note.
 const buildFixture = (): Database => {
   const db = new Database(":memory:");
   createBearTables(db);
@@ -155,7 +153,7 @@ describe("writes check the target note before sending", () => {
     });
 
     test(`${name} refuses a blank id and sends nothing`, async () => {
-      await expect(write("   ")).rejects.toThrow(/needs a note ID/);
+      await expect(write("   ")).rejects.toThrow("Note not found");
       expect(captured).toEqual([]);
     });
   }

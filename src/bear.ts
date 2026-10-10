@@ -148,27 +148,16 @@ const callBear = async (action: string, params: Record<string, string>): Promise
   }
 };
 
-// Bear's docs say trash and archive fall back to a search when no id is given,
-// and do not say what add-text does with an empty one.
-const requireNoteId = (noteId: string, action: string): string => {
-  const id = noteId.trim();
-  if (!id) {
-    throw new BearError(`Bear action '${action}' needs a note ID, but the value was blank.`);
-  }
-  return id;
-};
-
 // Bear never reports a write back, but the cases where one cannot land are
 // visible in the database beforehand. Bear may still change the note between
 // this read and the send; that race is accepted.
 const requireTargetNote = (
   db: Database,
   noteId: string,
-  action: string,
   refuse: { trashed?: boolean; archived?: boolean }
 ): Note => {
-  const id = requireNoteId(noteId, action);
-  const note = getNoteContent(id, db);
+  const id = noteId.trim();
+  const note = id ? getNoteContent(id, db) : null;
   if (!note) throw new BearError(`Note not found: ${id}`);
   if (refuse.trashed && note.isTrashed) {
     throw new BearError(`Note ${id} is in the trash. Restore it in Bear first.`);
@@ -192,11 +181,16 @@ export const createNote = async (title: string, text: string, tags?: string[]): 
   await callBear("create", { text: renderNoteMarkdown({ title, text, tags }), open_note: "no" });
 };
 
-const addText = async (db: Database, noteId: string, mode: string, text: (note: Note) => string): Promise<void> => {
-  const note = requireTargetNote(db, noteId, "add-text", { trashed: true });
+const addText = async (
+  db: Database,
+  noteId: string,
+  mode: "append" | "prepend" | "replace_all",
+  renderText: (note: Note) => string
+): Promise<void> => {
+  const note = requireTargetNote(db, noteId, { trashed: true });
   await callBear("add-text", {
     id: note.id,
-    text: text(note),
+    text: renderText(note),
     mode,
     exclude_trashed: "yes",
     open_note: "no",
@@ -228,12 +222,12 @@ export const replaceNoteContent = async (
 };
 
 export const trashNote = async (noteId: string, db: Database = getDatabase()): Promise<void> => {
-  const note = requireTargetNote(db, noteId, "trash", { trashed: true });
+  const note = requireTargetNote(db, noteId, { trashed: true });
   await callBear("trash", { id: note.id });
 };
 
 export const archiveNote = async (noteId: string, db: Database = getDatabase()): Promise<void> => {
-  const note = requireTargetNote(db, noteId, "archive", { archived: true });
+  const note = requireTargetNote(db, noteId, { archived: true });
   await callBear("archive", { id: note.id });
 };
 
@@ -454,8 +448,8 @@ const pageInMemory = (
     statement.finalize();
   }
 
-  // Same order as pageInSql. Z_PK breaks ties between notes stamped with the
-  // same date, or paging could repeat or skip one.
+  // Z_PK breaks ties between notes stamped with the same date, or paging could
+  // repeat or skip one.
   matches.sort((left, right) =>
     (right.sortKey ?? 0) - (left.sortKey ?? 0) || (right.pk ?? 0) - (left.pk ?? 0)
   );

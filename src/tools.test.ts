@@ -183,6 +183,7 @@ describe("schema validation at the tool surface", () => {
         expect(result.isError).toBe(true);
         expect(textOf(result)).toMatch(/Note ID must not be blank/);
       }
+      // refuseWrites (beforeEach) would turn a send into a different error.
     });
   }
 
