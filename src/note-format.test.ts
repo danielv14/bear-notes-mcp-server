@@ -44,6 +44,14 @@ describe("renderNoteMarkdown", () => {
     expect(markdown).toBe("# Real Title\n\n#work this should stay content");
   });
 
+  test("a title with a line break is rejected, so the line after the H1 stays the tag line", () => {
+    expect(() => renderNoteMarkdown({ title: "Foo\nBar", text: "body", tags: ["work"] }))
+      .toThrow(/single line/);
+    for (const title of ["Foo\r\nBar", "\nFoo", "Foo\n", "Foo\r"]) {
+      expect(() => renderNoteMarkdown({ title, text: "body" })).toThrow(/single line/);
+    }
+  });
+
   test("a blank title is rejected rather than rendered as a bare '# ' heading", () => {
     expect(() => renderNoteMarkdown({ title: "", text: "# Real Title\nbody" }))
       .toThrow(/title must not be empty/i);

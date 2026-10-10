@@ -64,10 +64,15 @@ const renderTags = (tags?: string[]): string =>
 // A blank title is rejected rather than rendered as a bare "# " heading: with
 // mode=replace_all that empty heading would overwrite the note's real title.
 // The tool schemas reject it at the boundary; this is the backstop for any
-// other caller, and keeps the H1-first guarantee unconditional.
+// other caller, and keeps the H1-first guarantee unconditional. A line break
+// in the title is rejected for the same reason: the rest of the title would
+// land above the tag line as body text.
 export const renderNoteMarkdown = ({ title, text, tags }: NoteParts): string => {
   if (!title.trim()) {
     throw new Error("Note title must not be empty");
+  }
+  if (/[\r\n]/.test(title)) {
+    throw new Error("Note title must be a single line");
   }
   const lines = [`# ${title}`];
   const renderedTags = renderTags(tags);

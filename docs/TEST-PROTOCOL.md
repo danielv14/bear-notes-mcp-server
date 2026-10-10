@@ -208,6 +208,9 @@ they return beyond the ids you needed to compare.
 
 One write at a time, verified against the raw query before the next.
 
+Before M1, ask the user to open some other note in Bear and keep Bear's window
+visible.
+
 | Check | Call | Expected |
 |---|---|---|
 | M1 | `bear_append(id, "\n\nAPPENDED-<MARKER>")` | the raw `body` ends with the appended text, and the original body is still there |
@@ -215,6 +218,11 @@ One write at a time, verified against the raw query before the next.
 | M3 | `bear_replace_content(id, title: "MCP protocol <RUN> REPLACED", text: "Replaced body <MARKER>", tags: [plain tag])` | the raw `title` is the new title, the raw `body` is the new body, and neither the appended nor the prepended text survives |
 | M4 | same row | the body does not begin with a bare `# ` heading with nothing after it |
 | M5 | `bear_get_note(id)` | reports the same title and body as the raw row |
+| M6 | `bear_replace_content(id, title: "MCP protocol <RUN> REPLACED", text: "Replaced body <MARKER>")`, no `tags` | the raw `tags` column is unchanged from M3, and the raw `body` has the tag line under the title |
+
+**EYES 1b.** Right after M1, ask the user: is the note they opened still the
+one on screen? Bear switching to the test note means `open_note=no` did not
+take.
 
 **EYES 2.** Ask the user: after the replace, does the note in Bear look like a
 normal note, with one title heading and the tag still attached, rather than
@@ -248,6 +256,9 @@ the marker is still exactly one.
 | V3 | `bear_search(tag: "#")` | not an error: a `#`-only tag means no tag filter |
 | V4 | `bear_get_note(noteId: "NO-SUCH-NOTE")` | error naming the unknown id |
 | V5 | `bear_create_note(title: "oversized-<RUN>", text: <120000 "ä">)` | error mentioning the character limit, and no note titled `oversized-<RUN>` exists in the raw table |
+| V6 | `bear_append(noteId: "NO-SUCH-NOTE", text: "x")` | error `Note not found`, not `Sent to Bear` |
+| V7 | `bear_trash_note(noteId: "  ")` | error, and the note from Phase 1 is still live |
+| V8 | `bear_create_note(title: "line1\nline2-<RUN>", text: "x")` | error, no note created |
 
 V5 matters more than it looks: the point is that an oversized payload is refused
 rather than truncated, because a truncated `bear_replace_content` would overwrite
@@ -261,6 +272,7 @@ a real note with a partial copy.
 | A2 | `bear_get_note(id)` | `isArchived` is `true` |
 | A3 | `bear_list_archived()` | the note is in the page, carrying `isArchived: true` |
 | A4 | `bear_search(term: MARKER)` | the note is gone from live results |
+| A5 | `bear_archive_note(id)` again | error saying it is already archived |
 
 There is no un-archive: Bear's URL scheme has no such action, so the note stays
 archived until Phase 7 trashes it. Do not ask the user to un-archive it by hand.
@@ -274,6 +286,7 @@ Bear's API has no permanent delete, so "delete" means trash.
 | D1 | `bear_trash_note(id)` | the raw row shows `trashed = 1` |
 | D2 | `bear_get_note(id)` | `isTrashed` is `true`, and the note is still readable |
 | D3 | `bear_search(term: MARKER)` | no live hit |
+| D3b | `bear_append(id, "x")` and `bear_trash_note(id)` | both errors saying the note is in the trash, and the raw `body` is unchanged |
 
 Then remove the run's tags, whichever survive:
 `bear_delete_tag` for the renamed tag, the nested tag, the multiword tag and the

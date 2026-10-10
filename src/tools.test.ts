@@ -5,6 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createBearServer, toToolResult, handleError } from "./tools";
 import { setBearUrlRunner, resetBearUrlRunner, MAX_LIMIT } from "./bear";
 import { createBearTables, CORE_DATA_2021 } from "./bear-fixture";
+import packageJson from "../package.json";
 
 // These tests cross the same seam the MCP client crosses: tools are invoked
 // through a connected client over an in-memory transport, so the zod schemas,
@@ -82,7 +83,11 @@ describe("tool registration", () => {
     ]);
   });
 
-  test("the database opens on the first read, not at construction and never for writes", async () => {
+  test("reports the version from package.json", () => {
+    expect(client.getServerVersion()?.version).toBe(packageJson.version);
+  });
+
+  test("the database opens on first use, not at construction", async () => {
     let opens = 0;
     const countingServer = createBearServer(() => {
       opens += 1;
@@ -96,10 +101,6 @@ describe("tool registration", () => {
       expect(opens).toBe(0);
 
       await countingClient.listTools();
-      expect(opens).toBe(0);
-
-      setBearUrlRunner(async () => ({ ok: true }));
-      await countingClient.callTool({ name: "bear_trash_note", arguments: { noteId: "NOTE-A" } });
       expect(opens).toBe(0);
 
       await countingClient.callTool({ name: "bear_search", arguments: {} });
@@ -165,6 +166,37 @@ describe("schema validation at the tool surface", () => {
     expect(textOf(result)).toMatch(/Note title must not be empty/);
   });
 
+  test("a note title with a line break is rejected for both create and replace", async () => {
+    const created = await call("bear_create_note", { title: "Foo\nBar", text: "body", tags: ["work"] });
+    expect(created.isError).toBe(true);
+    expect(textOf(created)).toMatch(/Note title must be a single line/);
+
+    const replaced = await call("bear_replace_content", { noteId: "NOTE-A", title: "Foo\r\nBar", text: "body" });
+    expect(replaced.isError).toBe(true);
+    expect(textOf(replaced)).toMatch(/Note title must be a single line/);
+  });
+
+  for (const tool of ["bear_get_note", "bear_append", "bear_prepend", "bear_replace_content", "bear_trash_note", "bear_archive_note"]) {
+    test(`${tool} rejects a blank note ID`, async () => {
+      for (const noteId of ["", "   "]) {
+        const result = await call(tool, { noteId, text: "x", title: "T" });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toMatch(/Note ID must not be blank/);
+      }
+      // refuseWrites (beforeEach) would turn a send into a different error.
+    });
+  }
+
+  test("tag rename and delete reject a blank name at the boundary", async () => {
+    const renamed = await call("bear_rename_tag", { name: " ", newName: "new" });
+    expect(renamed.isError).toBe(true);
+    expect(textOf(renamed)).toMatch(/Tag must not be blank/);
+
+    const deleted = await call("bear_delete_tag", { name: "" });
+    expect(deleted.isError).toBe(true);
+    expect(textOf(deleted)).toMatch(/Tag must not be blank/);
+  });
+
   test("a limit above MAX_LIMIT is rejected, not clamped, at this surface", async () => {
     const result = await call("bear_search", { limit: MAX_LIMIT + 1 });
     expect(result.isError).toBe(true);
@@ -186,6 +218,23 @@ describe("write tools and error wrapping", () => {
       'Sent to Bear: create note "My Note". Bear does not report back, so this is not confirmation that it was applied.'
     );
     expect(captured).toHaveLength(1);
+  });
+
+  test("a write to an unknown note id is an error and sends nothing", async () => {
+    const result = await call("bear_append", { noteId: "NOPE", text: "x" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("Error: Note not found: NOPE");
+  });
+
+  test("bear_replace_content without tags keeps the note's tags", async () => {
+    const captured: string[] = [];
+    setBearUrlRunner(async (url) => {
+      captured.push(url);
+      return { ok: true };
+    });
+
+    await call("bear_replace_content", { noteId: "NOTE-A", title: "New", text: "x" });
+    expect(captured[0]).toContain(`text=${encodeURIComponent("# New\n#work\n\nx")}&`);
   });
 
   test("a BearError from the write path becomes an isError result through the registration loop", async () => {

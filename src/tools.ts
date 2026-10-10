@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Database } from "bun:sqlite";
 import { getDatabase } from "./database.js";
+import packageJson from "../package.json";
 import {
   createNote,
   searchNotes,
@@ -59,7 +60,12 @@ const defineTool = <Schema extends z.ZodObject<any>>(definition: {
 // A blank title would render as a bare "# " H1, and under mode=replace_all
 // that empty heading overwrites the note's real title. Rejected at the
 // boundary rather than repaired further in.
-const noteTitle = z.string().trim().min(1, "Note title must not be empty");
+const noteTitle = z.string().trim().min(1, "Note title must not be empty")
+  .refine(title => !/[\r\n]/.test(title), "Note title must be a single line");
+
+const noteIdSchema = z.string().trim().min(1, "Note ID must not be blank");
+
+const tagNameSchema = z.string().trim().min(1, "Tag must not be blank");
 
 // Pagination, shared by every list-shaped tool. Defaults live in bear.ts so
 // omitting them keeps each tool's own historical page size.
@@ -99,7 +105,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     description: "Search for notes in Bear by text or tag. Matching is case-insensitive, including for non-ASCII characters, and the term matches literally (no wildcards). Returns one page of notes: `count` is the size of that page, and `hasMore` says whether further notes matched.",
     inputSchema: z.object({
       term: z.string().optional().describe("Search term (free text). Blank means no text filter."),
-      tag: z.string().optional().describe("Filter by tag (a leading # is optional). Blank means no tag filter."),
+      tag: z.string().optional().describe("Filter by tag (a leading # is optional). A parent tag includes notes tagged with its subtags, as in Bear's sidebar. Blank means no tag filter."),
       ...paginationSchema,
     }),
     handler: ({ term, tag, limit, offset }) => searchNotes({ term, tag, limit, offset }, getDb())
@@ -108,7 +114,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_get_note",
     description: "Get the full content of a specific note. Works for trashed and archived notes too; the isTrashed and isArchived fields say which.",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID (from search results)")
+      noteId: noteIdSchema.describe("Note ID (from search results)")
     }),
     handler: ({ noteId }) => {
       const note = getNoteContent(noteId, getDb());
@@ -120,11 +126,11 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_append",
     description: "Append text to an existing note",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID (from search results)"),
+      noteId: noteIdSchema.describe("Note ID (from search results)"),
       text: z.string().describe("Text to append")
     }),
     handler: async ({ noteId, text }) => {
-      await appendToNote(noteId, text);
+      await appendToNote(noteId, text, getDb());
       return sentToBear(`append text to note ${noteId}`);
     }
   }),
@@ -132,11 +138,11 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_prepend",
     description: "Prepend text to the beginning of an existing note",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID (from search results)"),
+      noteId: noteIdSchema.describe("Note ID (from search results)"),
       text: z.string().describe("Text to prepend")
     }),
     handler: async ({ noteId, text }) => {
-      await prependToNote(noteId, text);
+      await prependToNote(noteId, text, getDb());
       return sentToBear(`prepend text to note ${noteId}`);
     }
   }),
@@ -144,27 +150,27 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_replace_content",
     description: "Replace the entire content of an existing note. Always structures the note as: title (H1) first, then tags, then content.",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID (from search results)"),
+      noteId: noteIdSchema.describe("Note ID (from search results)"),
       title: noteTitle.describe("Note title (becomes the H1 heading on the first line)"),
       text: z.string().describe("New content (Markdown), placed after title and tags"),
-      tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content; a leading # is optional)")
+      tags: z.array(z.string()).optional().describe("Tags to set on the note (placed between title and content; a leading # is optional). Omit to keep the note's current tags; pass [] to remove them all.")
     }),
     handler: async ({ noteId, title, text, tags }) => {
-      await replaceNoteContent(noteId, title, text, tags);
+      await replaceNoteContent(noteId, title, text, tags, getDb());
       return sentToBear(`replace the content of note ${noteId}`);
     }
   }),
   defineTool({
     name: "bear_list_tags",
-    description: "List all tags in Bear with note counts",
+    description: "List all tags in Bear with note counts. A parent tag's count includes notes tagged only with its subtags.",
     inputSchema: z.object({}),
     handler: () => getAllTags(getDb())
   }),
   defineTool({
     name: "bear_list_by_tag",
-    description: "List notes with a specific tag. Returns one page: `count` is the size of that page, and `hasMore` says whether further notes carry the tag.",
+    description: "List notes with a specific tag. Like Bear's sidebar, a parent tag includes notes tagged only with its subtags (`work` includes `work/project`). Returns one page: `count` is the size of that page, and `hasMore` says whether further notes carry the tag.",
     inputSchema: z.object({
-      tag: z.string().trim().min(1, "Tag must not be blank").describe("Tag to filter by (a leading # is optional)"),
+      tag: tagNameSchema.describe("Tag to filter by (a leading # is optional)"),
       ...paginationSchema,
     }),
     handler: ({ tag, limit, offset }) => ({ tag, ...listNotesByTag(tag, { limit, offset }, getDb()) })
@@ -173,8 +179,8 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_rename_tag",
     description: "Rename an existing tag in Bear",
     inputSchema: z.object({
-      name: z.string().describe("Current tag name (without #)"),
-      newName: z.string().describe("New tag name (without #)")
+      name: tagNameSchema.describe("Current tag name (a leading # is optional)"),
+      newName: tagNameSchema.describe("New tag name (a leading # is optional)")
     }),
     handler: async ({ name, newName }) => {
       await renameTag(name, newName);
@@ -185,7 +191,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_delete_tag",
     description: "Delete an existing tag from all notes in Bear",
     inputSchema: z.object({
-      name: z.string().describe("Tag name to delete (without #)")
+      name: tagNameSchema.describe("Tag name to delete (a leading # is optional)")
     }),
     handler: async ({ name }) => {
       await deleteTag(name);
@@ -196,10 +202,10 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_trash_note",
     description: "Move a note to trash",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID")
+      noteId: noteIdSchema.describe("Note ID")
     }),
     handler: async ({ noteId }) => {
-      await trashNote(noteId);
+      await trashNote(noteId, getDb());
       return sentToBear(`move note ${noteId} to trash`);
     }
   }),
@@ -207,10 +213,10 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
     name: "bear_archive_note",
     description: "Archive a note (moves it out of main view but keeps it accessible). Bear's URL scheme has no un-archive action, so this cannot be undone from here - only in Bear itself.",
     inputSchema: z.object({
-      noteId: z.string().describe("Note ID")
+      noteId: noteIdSchema.describe("Note ID")
     }),
     handler: async ({ noteId }) => {
-      await archiveNote(noteId);
+      await archiveNote(noteId, getDb());
       return sentToBear(`archive note ${noteId}`);
     }
   }),
@@ -228,7 +234,7 @@ const buildTools = (getDb: () => Database = getDatabase): ToolDefinition[] => [
 export const createBearServer = (getDb: () => Database = getDatabase): McpServer => {
   const server = new McpServer({
     name: "bear",
-    version: "1.0.0"
+    version: packageJson.version
   });
 
   for (const tool of buildTools(getDb)) {

@@ -58,7 +58,10 @@ This is an MCP (Model Context Protocol) server that provides Claude Code access 
 
 A read is a SQLite query, so it never waits on Bear's UI. A write goes through
 Bear's own API, because Bear owns the database and this server opens it
-read-only.
+read-only. A write to an existing note first reads it from SQLite and
+refuses a target that does not exist or is in the trash. Archive refuses an
+already archived note instead. Bear would drop any of these writes without a
+word.
 
 Bear's URL scheme has no `unarchive` action, so archiving is one-way from here.
 Writes are also fire-and-forget: `open` exits as soon as macOS finds a handler,
